@@ -52,8 +52,12 @@ int main(int argc, char **argv) {
 
   // Uncomment the code below to pass the first stage
   
-  accept(server_fd, (struct sockaddr *) &client_addr, (socklen_t *) &client_addr_len);
+  int client_addr_len = sizeof(client_addr);
+  std::cout << "Waiting for a client to connect...\n";
+  int client_fd = accept(server_fd, (struct sockaddr *) &client_addr, (socklen_t *) &client_addr_len);
   std::cout << "Client connected\n";
+  const char *response = "+PONG\r\n";
+  send(client_fd, response, strlen(response), 0);
   
   close(server_fd);
 
