@@ -1,171 +1,105 @@
-#include <arpa/inet.h>
-#include <cstdlib>
-#include <cstring>
 #include <iostream>
-#include <netdb.h>
-#include <pthread.h>
+#include <vector>
 #include <string>
-#include <sys/socket.h>
-#include <sys/types.h>
+#include <unordered_map>
 #include <unistd.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <poll.h>
 
-typedef struct {
-  int receiver_fd;
-} communication_thread_args;
+std::unordered_map<std::string, std::string> g_kv_store;
 
-typedef struct {
-  char *command;
-  char **data;
-} message;
-
-typedef struct {
-  char *parsed_string;
-  char *buffer;
-} parsed_string_data;
-
-char *RESP_encode(char *input_string) {
-  int length = strlen(input_string);
-  std::string encoded_string =
-      "$" + std::to_string(length) + "\r\n" + input_string + "\r\n";
-  char *encoded_c_string = new char[1024];
-  std::strcpy(encoded_c_string, encoded_string.c_str());
-  return encoded_c_string;
-}
-
-parsed_string_data parse_string(char *buffer) {
-  parsed_string_data string_data;
-  string_data.parsed_string = new char[1024];
-  int iter{0};
-  while (buffer[iter] != '\r' || buffer[iter + 1] != '\n')
-    iter++;
-  buffer += iter + 2;
-  iter = 0;
-  while (buffer[iter] != '\r' || buffer[iter + 1] != '\n') {
-    string_data.parsed_string[iter] = buffer[iter];
-    iter++;
-  }
-  string_data.parsed_string[iter] = 0;
-  string_data.buffer = buffer + iter + 2;
-  return string_data;
-}
-
-char **parse_array(char *buffer) {
-  std::cout << "parse_array invoked!\n";
-  char **array = new char *[512];
-  int iter{0};
-  char array_size_string[1024];
-  while (buffer[iter] != '\r' || buffer[iter + 1] != '\n') {
-    array_size_string[iter] = buffer[iter];
-    iter++;
-  }
-  array_size_string[iter] = 0;
-  int array_size = std::atoi(array_size_string);
-  buffer += iter + 2;
-  for (int i = 0; i < array_size; i++)
-    if (*buffer == '$') {
-      parsed_string_data parsed_data = parse_string(buffer);
-      array[i] = parsed_data.parsed_string;
-      std::cout << "Line 75: " << parsed_data.parsed_string << std::endl;
-      buffer = parsed_data.buffer;
+std::vector<std::string> split_resp(const std::string& s) {
+    std::vector<std::string> parts;
+    size_t start = 0, end = 0;
+    while ((end = s.find("\r\n", start)) != std::string::npos) {
+        parts.push_back(s.substr(start, end - start));
+        start = end + 2;
     }
-  return array;
+    return parts;
 }
 
-message *parse_message(char *buffer) {
-  std::cout << "parse_message invoked!\n";
-  int iter{1};
-  message *msg = new message;
-  msg->data = parse_array(buffer + 1);
-  msg->command = (char *)(msg->data[0]);
-  return msg;
-}
+void handle_client(int client_fd) {
+    char buffer[1024];
+    int bytes_read = recv(client_fd, buffer, sizeof(buffer) - 1, 0);
 
-const char *echo(char **data) {
-  char *string_to_encode = (data[1]);
-  char *buffer = RESP_encode(string_to_encode);
-  return buffer;
-}
-
-void *communication_thread(void *arg) {
-  communication_thread_args *args = (communication_thread_args *)arg;
-  char buf[1024];
-  std::cout << "Communication thread for fd: " << args->receiver_fd << "\n";
-  while (int bytes_read = recv(args->receiver_fd, buf, 1024, 0)) {
-    std::cout << bytes_read << " bytes received" << std::endl;
-    message *parsed_message = parse_message(buf);
-    std::cout << parsed_message->command << std::endl;
-    const char *resp_buf;
-    if (strcmp(parsed_message->command, "PING") == 0) {
-      resp_buf = "+PONG\r\n";
-    } else if (strcmp(parsed_message->command, "ECHO") == 0) {
-      resp_buf = echo(parsed_message->data);
+    if (bytes_read <= 0) {
+        close(client_fd);
+        return;
     }
-    send(args->receiver_fd, resp_buf, strlen(resp_buf), 0);
-    delete parsed_message->data;
-    for (int i = 0; i < 1024; i++)
-      buf[i] = 0;
-  }
-  delete args;
-  return NULL;
+
+    buffer[bytes_read] = '\0';
+    std::vector<std::string> parts = split_resp(std::string(buffer));
+    
+    if (parts.size() < 3) return;
+
+    std::string command = parts[2];
+    for (auto &c : command) c = toupper(c);
+
+    if (command == "PING") {
+        send(client_fd, "+PONG\r\n", 7, 0);
+    } 
+    else if (command == "ECHO") {
+        std::string msg = parts[4];
+        std::string resp = "$" + std::to_string(msg.length()) + "\r\n" + msg + "\r\n";
+        send(client_fd, resp.c_str(), resp.length(), 0);
+    }
+    else if (command == "SET") {
+        g_kv_store[parts[4]] = parts[6];
+        send(client_fd, "+OK\r\n", 5, 0);
+    }
+    else if (command == "GET") {
+        std::string key = parts[4];
+        if (g_kv_store.count(key)) {
+            std::string val = g_kv_store[key];
+            std::string resp = "$" + std::to_string(val.length()) + "\r\n" + val + "\r\n";
+            send(client_fd, resp.c_str(), resp.length(), 0);
+        } else {
+            send(client_fd, "$-1\r\n", 5, 0); // Null Bulk String
+        }
+    }
 }
 
-int main(int argc, char **argv) {
-  // Flush after every std::cout / std::cerr
-  std::cout << std::unitbuf;
-  std::cerr << std::unitbuf;
+int main() {
+    int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    int reuse = 1;
+    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
 
-  int server_fd = socket(AF_INET, SOCK_STREAM, 0);
-  if (server_fd < 0) {
-    std::cerr << "Failed to create server socket\n";
-    return 1;
-  }
+    struct sockaddr_in addr = {AF_INET, htons(6379), INADDR_ANY};
+    bind(server_fd, (struct sockaddr*)&addr, sizeof(addr));
+    listen(server_fd, 5);
 
-  // Since the tester restarts your program quite often, setting SO_REUSEADDR
-  // ensures that we don't run into 'Address already in use' errors
-  int reuse = 1;
-  if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) <
-      0) {
-    std::cerr << "setsockopt failed\n";
-    return 1;
-  }
+    std::vector<pollfd> poll_fds;
+    poll_fds.push_back({server_fd, POLLIN, 0});
 
-  struct sockaddr_in server_addr;
-  server_addr.sin_family = AF_INET;
-  server_addr.sin_addr.s_addr = INADDR_ANY;
-  server_addr.sin_port = htons(6379);
+    std::cout << "Single-threaded server listening on 6379...\n";
 
-  if (bind(server_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) !=
-      0) {
-    std::cerr << "Failed to bind to port 6379\n";
-    return 1;
-  }
+    while (true) {
+        if (poll(poll_fds.data(), poll_fds.size(), -1) < 0) break;
 
-  int connection_backlog = 5;
-  if (listen(server_fd, connection_backlog) != 0) {
-    std::cerr << "listen failed\n";
-    return 1;
-  }
+        // Check if the server socket has a new connection
+        if (poll_fds[0].revents & POLLIN) {
+            int client_fd = accept(server_fd, nullptr, nullptr);
+            if (client_fd >= 0) {
+                poll_fds.push_back({client_fd, POLLIN, 0});
+            }
+        }
 
-  struct sockaddr_in client_addr;
-  int client_addr_len = sizeof(client_addr);
-  std::cout << "Waiting for a client to connect...\n";
+        // Check existing client sockets for data
+        for (size_t i = 1; i < poll_fds.size(); ++i) {
+            if (poll_fds[i].revents & POLLIN) {
+                handle_client(poll_fds[i].fd);
+            }
+            
+            char dummy;
+            if (recv(poll_fds[i].fd, &dummy, 1, MSG_PEEK | MSG_DONTWAIT) == 0) {
+                close(poll_fds[i].fd);
+                poll_fds.erase(poll_fds.begin() + i);
+                i--;
+            }
+        }
+    }
 
-  // You can use print statements as follows for debugging, they'll be visible
-  // when running tests.
-  std::cout << "Logs from your program will appear here!\n";
-
-  // Uncomment the code below to pass the first stage
-  //
-  while (true) {
-    int receiver_fd = accept(server_fd, (struct sockaddr *)&client_addr,
-                             (socklen_t *)&client_addr_len);
-    pthread_t thread;
-    communication_thread_args *arg = new communication_thread_args;
-    *arg = {receiver_fd};
-    pthread_create(&thread, NULL, communication_thread, arg);
-  }
-  close(server_fd);
-  //
-
-  return 0;
+    close(server_fd);
+    return 0;
 }
