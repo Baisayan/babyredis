@@ -105,26 +105,23 @@ void handle_client(int client_fd) {
         }
 
         ValueEntry &entry = g_kv_store[key];
-
-        // 2. Type Check
         if (entry.type != ValueType::LIST) {
             send(client_fd, "-WRONGTYPE Operation - Key holding wrong value\r\n", 67, 0);
             return;
         }
 
-        size_t list_len = entry.list_val.size();
-
+        long long list_len = (long long)entry.list_val.size();
+        if (start < 0) start = list_len + start;
         if (start < 0) start = 0;
-        if (start >= (long long)list_len || start > stop) {
+        if (stop < 0) stop = list_len + stop;
+        if (start >= list_len || start > stop) {
             send(client_fd, "*0\r\n", 4, 0);
             return;
         }
-        if (stop >= (long long)list_len) {
-            stop = list_len - 1;
-        }
-        size_t num_elements = (size_t)(stop - start + 1);
+        if (stop >= list_len) stop = list_len - 1;
 
         // construct RESP array response n send it back
+        size_t num_elements = list_len + 1;
         std::string resp = "*" + std::to_string(num_elements) + "\r\n";
         for (size_t i = (size_t)start; i <= (size_t)stop; ++i) {
             std::string val = entry.list_val[i];
