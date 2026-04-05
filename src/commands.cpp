@@ -111,9 +111,11 @@ void handle_client(int client_fd) {
         }
 
         long long list_len = (long long)entry.list_val.size();
+
         if (start < 0) start = list_len + start;
         if (start < 0) start = 0;
         if (stop < 0) stop = list_len + stop;
+
         if (start >= list_len || start > stop) {
             send(client_fd, "*0\r\n", 4, 0);
             return;
@@ -121,10 +123,10 @@ void handle_client(int client_fd) {
         if (stop >= list_len) stop = list_len - 1;
 
         // construct RESP array response n send it back
-        size_t num_elements = list_len + 1;
+        size_t num_elements = (size_t)(stop - start + 1);
         std::string resp = "*" + std::to_string(num_elements) + "\r\n";
-        for (size_t i = (size_t)start; i <= (size_t)stop; ++i) {
-            std::string val = entry.list_val[i];
+        for (long long i = start; i <= stop; ++i) {
+            std::string val = entry.list_val[(size_t)i];
             resp += "$" + std::to_string(val.length()) + "\r\n" + val + "\r\n";
         }
         send(client_fd, resp.c_str(), resp.length(), 0);
