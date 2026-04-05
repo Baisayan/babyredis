@@ -92,13 +92,12 @@ void handle_client(int client_fd) {
         }
         ValueEntry &entry = g_kv_store[key];
 
-        int pushed_count = 0;
-
         for (size_t i = 6; i < parts.size(); i += 2) {
             if (command == "RPUSH") entry.list_val.push_back(parts[i]);
             else entry.list_val.insert(entry.list_val.begin(), parts[i]);
-            pushed_count++;
         }
+
+        int final_length = entry.list_val.size();
         
         while (!entry.list_val.empty()) {
             auto it = std::find_if(
@@ -117,7 +116,7 @@ void handle_client(int client_fd) {
             g_blocked_clients_list.erase(it);
         }
 
-        std::string resp = ":" + std::to_string(pushed_count) + "\r\n";
+        std::string resp = ":" + std::to_string(final_length) + "\r\n";
         send(client_fd, resp.c_str(), resp.length(), 0);
     }
 
@@ -143,7 +142,7 @@ void handle_client(int client_fd) {
             bc.has_timeout = true;
             bc.deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds((long long)(timeout_sec * 1000));
         }
-        
+
         g_blocked_clients_list.push_back(bc);
         return;
     }
