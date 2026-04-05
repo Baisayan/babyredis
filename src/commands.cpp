@@ -91,4 +91,45 @@ void handle_client(int client_fd) {
         std::string resp = ":" + std::to_string(entry.list_val.size()) + "\r\n";
         send(client_fd, resp.c_str(), resp.length(), 0);
     }
+    else if (command == "LRANGE") {
+        if (parts.size() < 9) return; // LRANGE, key, start, stop
+
+        std::string key = parts[4];
+        long long start = std::stoll(parts[6]);
+        long long stop = std::stoll(parts[8]);
+
+        // if key doesn't exist, return empty array
+        if (g_kv_store.find(key) == g_kv_store.end()) {
+            send(client_fd, "*0\r\n", 4, 0);
+            return;
+        }
+
+        ValueEntry &entry = g_kv_store[key];
+
+        // 2. Type Check
+        if (entry.type != ValueType::LIST) {
+            send(client_fd, "-WRONGTYPE Operation - Key holding wrong value\r\n", 67, 0);
+            return;
+        }
+
+        size_t list_len = entry.list_val.size();
+
+        if (start < 0) start = 0;
+        if (start >= (long long)list_len || start > stop) {
+            send(client_fd, "*0\r\n", 4, 0);
+            return;
+        }
+        if (stop >= (long long)list_len) {
+            stop = list_len - 1;
+        }
+        size_t num_elements = (size_t)(stop - start + 1);
+
+        // construct RESP array response n send it back
+        std::string resp = "*" + std::to_string(num_elements) + "\r\n";
+        for (size_t i = (size_t)start; i <= (size_t)stop; ++i) {
+            std::string val = entry.list_val[i];
+            resp += "$" + std::to_string(val.length()) + "\r\n" + val + "\r\n";
+        }
+        send(client_fd, resp.c_str(), resp.length(), 0);
+    }
 }
