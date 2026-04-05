@@ -95,16 +95,20 @@ void handle_client(int client_fd) {
         for (size_t i = 6; i < parts.size(); i += 2) {
             if (command == "RPUSH") entry.list_val.push_back(parts[i]);
             else entry.list_val.insert(entry.list_val.begin(), parts[i]);
-
+        }
+        
+        while (!entry.list_val.empty()) {
             auto it = std::find_if(g_blocked_clients_list.begin(), g_blocked_clients_list.end(), [&](const BlockedClient& bc) { return bc.key == key; });
             
-            if (it != g_blocked_clients_list.end()) {
-                std::string val = entry.list_val.front();
-                entry.list_val.erase(entry.list_val.begin());
-                handle_blocked_clients(it->fd, key, val);
-                g_blocked_clients_list.erase(it);
-            }
-        }   
+            if (it == g_blocked_clients_list.end()) break;
+
+            // Pop the first element
+            std::string val = entry.list_val.front();
+            entry.list_val.erase(entry.list_val.begin());
+
+            handle_blocked_clients(it->fd, key, val);
+            g_blocked_clients_list.erase(it);
+        }
 
         std::string resp = ":" + std::to_string(entry.list_val.size()) + "\r\n";
         send(client_fd, resp.c_str(), resp.length(), 0);
