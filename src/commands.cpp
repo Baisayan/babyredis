@@ -6,7 +6,7 @@
 
 // Init global store defined in common.h
 std::unordered_map<std::string, ValueEntry> g_kv_store;
-std::unordered_map<std::string, std::deque<int>> g_blocked_clients;
+std::vector<BlockedClient> g_blocked_clients_list;
 
 // notify a blocked client if key becomes available
 void handle_blocked_clients(int client_fd, const std::string& key, const std::string& value) {
@@ -92,33 +92,28 @@ void handle_client(int client_fd) {
         }
         ValueEntry &entry = g_kv_store[key];
 
-        int elements_added = 0;
         for (size_t i = 6; i < parts.size(); i += 2) {
             if (command == "RPUSH") entry.list_val.push_back(parts[i]);
             else entry.list_val.insert(entry.list_val.begin(), parts[i]);
-            elements_added++;
-        }
 
-        size_t return_size = entry.list_val.size() + (g_blocked_clients[key].empty() ? 0 : std::min((size_t)elements_added, g_blocked_clients[key].size()));
-        size_t final_size_for_resp = entry.list_val.size();
-
-        while (!entry.list_val.empty() && g_blocked_clients.count(key) && !g_blocked_clients[key].empty()) {
-            int waiting_fd = g_blocked_clients[key].front();
-            g_blocked_clients[key].pop_front();
+            auto it = std::find_if(g_blocked_clients_list.begin(), g_blocked_clients_list.end(), [&](const BlockedClient& bc) { return bc.key == key; });
             
-            std::string popped_val = entry.list_val.front();
-            entry.list_val.erase(entry.list_val.begin());
-            
-            handle_blocked_clients(waiting_fd, key, popped_val);
-        }    
+            if (it != g_blocked_clients_list.end()) {
+                std::string val = entry.list_val.front();
+                entry.list_val.erase(entry.list_val.begin());
+                handle_blocked_clients(it->fd, key, val);
+                g_blocked_clients_list.erase(it);
+            }
+        }   
 
-        std::string resp = ":" + std::to_string(final_size_for_resp) + "\r\n";
+        std::string resp = ":" + std::to_string(entry.list_val.size()) + "\r\n";
         send(client_fd, resp.c_str(), resp.length(), 0);
     }
 
     else if (command == "BLPOP") {
         if (parts.size() < 7) return;
         std::string key = parts[4];
+        double timeout_sec = std::stod(parts[6]);
 
         // list exists n not empty, behave like LPOP
         if (g_kv_store.count(key) && !g_kv_store[key].list_val.empty()) {
@@ -128,8 +123,14 @@ void handle_client(int client_fd) {
             handle_blocked_clients(client_fd, key, val);
         } else {
             // list empty n doesn't exist, block client
-            g_blocked_clients[key].push_back(client_fd);
-            std::cout << "Client " << client_fd << " blocked on key: " << key << std::endl;
+            BlockedClient bc;
+            bc.fd = client_fd;
+            bc.key = key;
+            if (timeout_sec > 0) {
+                bc.has_timeout = true;
+                bc.deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(static_cast<long long>(timeout_sec * 1000));
+            }
+            g_blocked_clients_list.push_back(bc);
         }
     }
 

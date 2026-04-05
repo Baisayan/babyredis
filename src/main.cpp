@@ -8,6 +8,7 @@
 #include "common.h"
 
 void handle_client(int client_fd);
+std::vector<BlockedClient> g_blocked_clients_list;
 
 int main() {
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -24,7 +25,17 @@ int main() {
     std::cout << "BabyRedis server listening on 6379...\n";
 
     while (true) {
-        if (poll(poll_fds.data(), poll_fds.size(), -1) < 0) break;
+        if (poll(poll_fds.data(), poll_fds.size(), 10) < 0) break;
+
+        auto now = std::chrono::steady_clock::now();
+        for (auto it = g_blocked_clients_list.begin(); it != g_blocked_clients_list.end(); ) {
+            if (it->has_timeout && now >= it->deadline) {
+                send(it->fd, "*-1\r\n", 5, 0); // Send null array
+                it = g_blocked_clients_list.erase(it);
+            } else {
+                ++it;
+            }
+        }
 
         // Check if the server socket has a new connection
         if (poll_fds[0].revents & POLLIN) {
@@ -44,10 +55,12 @@ int main() {
             if (recv(poll_fds[i].fd, &dummy, 1, MSG_PEEK | MSG_DONTWAIT) == 0) {
                 int fd_to_close = poll_fds[i].fd;
 
-                for (auto& pair : g_blocked_clients) {
-                    auto& queue = pair.second;
-                    queue.erase(std::remove(queue.begin(), queue.end(), fd_to_close), queue.end());
-                }
+                g_blocked_clients_list.erase(
+                    std::remove_if(g_blocked_clients_list.begin(), g_blocked_clients_list.end(), [fd_to_close](const BlockedClient& bc) {
+                            return bc.fd == fd_to_close;
+                        }),
+                    g_blocked_clients_list.end()
+                );
 
                 close(fd_to_close);
                 poll_fds.erase(poll_fds.begin() + i);

@@ -17,7 +17,14 @@ struct ValueEntry {
     bool has_expiry = false;
 };
 
-extern std::unordered_map<std::string, std::deque<int>> g_blocked_clients;
+struct BlockedClient {
+    int fd;
+    std::string key;
+    std::chrono::time_point<std::chrono::steady_clock> deadline;
+    bool has_timeout = false;
+};
+
+extern std::vector<BlockedClient> g_blocked_clients_list;
 extern std::unordered_map<std::string, ValueEntry> g_kv_store;
 std::vector<std::string> split_resp(const std::string& s);
 
