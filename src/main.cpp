@@ -4,6 +4,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <poll.h>
+#include <algorithm>
 #include "common.h"
 
 void handle_client(int client_fd);
@@ -41,7 +42,14 @@ int main() {
             
             char dummy;
             if (recv(poll_fds[i].fd, &dummy, 1, MSG_PEEK | MSG_DONTWAIT) == 0) {
-                close(poll_fds[i].fd);
+                int fd_to_close = poll_fds[i].fd;
+
+                for (auto& pair : g_blocked_clients) {
+                    auto& queue = pair.second;
+                    queue.erase(std::remove(queue.begin(), queue.end(), fd_to_close), queue.end());
+                }
+
+                close(fd_to_close);
                 poll_fds.erase(poll_fds.begin() + i);
                 i--;
             }

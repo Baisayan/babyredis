@@ -5,6 +5,7 @@
 #include <unordered_map>
 #include <chrono>
 #include <vector>
+#include <deque>
 
 enum class ValueType {STRING, LIST};
 
@@ -16,6 +17,7 @@ struct ValueEntry {
     bool has_expiry = false;
 };
 
+extern std::unordered_map<std::string, std::deque<int>> g_blocked_clients;
 extern std::unordered_map<std::string, ValueEntry> g_kv_store;
 std::vector<std::string> split_resp(const std::string& s);
 

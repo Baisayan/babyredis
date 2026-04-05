@@ -1,15 +1,23 @@
 #include <iostream>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <algorithm>
 #include "common.h"
 
 // Init global store defined in common.h
 std::unordered_map<std::string, ValueEntry> g_kv_store;
+std::unordered_map<std::string, std::deque<int>> g_blocked_clients;
+
+// notify a blocked client if key becomes available
+void handle_blocked_clients(int client_fd, const std::string& key, const std::string& value) {
+    std::string resp = "*2\r\n$" + std::to_string(key.length()) + "\r\n" + key + "\r\n";
+    resp += "$" + std::to_string(value.length()) + "\r\n" + value + "\r\n";
+    send(client_fd, resp.c_str(), resp.length(), 0);
+}
 
 void handle_client(int client_fd) {
     char buffer[1024];
     int bytes_read = recv(client_fd, buffer, sizeof(buffer) - 1, 0);
-
     if (bytes_read <= 0) {
         close(client_fd);
         return;
@@ -17,7 +25,6 @@ void handle_client(int client_fd) {
 
     buffer[bytes_read] = '\0';
     std::vector<std::string> parts = split_resp(std::string(buffer));
-    
     if (parts.size() < 3) return;
 
     std::string command = parts[2];
@@ -73,7 +80,7 @@ void handle_client(int client_fd) {
         }
     }
 
-    else if (command == "RPUSH") {
+    else if (command == "RPUSH" || command == "LPUSH") {
         if (parts.size() < 7) return;
         std::string key = parts[4];
 
@@ -83,42 +90,42 @@ void handle_client(int client_fd) {
             entry.type = ValueType::LIST;
             g_kv_store[key] = entry;
         }
-
         ValueEntry &entry = g_kv_store[key];
-        if (entry.type != ValueType::LIST) {
-            send(client_fd, "-WRONGTYPE Operation - Key holding wrong value\r\n", 67, 0);
-            return;
-        }
+
         for (size_t i = 6; i < parts.size(); i += 2) {
-            entry.list_val.push_back(parts[i]);
-        }
+            if (command == "RPUSH") entry.list_val.push_back(parts[i]);
+            else entry.list_val.insert(entry.list_val.begin(), parts[i]);
+
+            // if clients waiting, give them element immediately
+            if (g_blocked_clients.count(key) && !g_blocked_clients[key].empty()) {
+                int waiting_fd = g_blocked_clients[key].front();
+                g_blocked_clients[key].pop_front();
+                
+                std::string popped_val = entry.list_val.front();
+                entry.list_val.erase(entry.list_val.begin());
+                
+                handle_blocked_clients(waiting_fd, key, popped_val);
+            }
+        }    
         std::string resp = ":" + std::to_string(entry.list_val.size()) + "\r\n";
         send(client_fd, resp.c_str(), resp.length(), 0);
     }
 
-    else if (command == "LPUSH") {
+    else if (command == "BLPOP") {
         if (parts.size() < 7) return;
         std::string key = parts[4];
 
-        // create list if it doesn't exist
-        if (g_kv_store.find(key) == g_kv_store.end()) {
-            ValueEntry entry;
-            entry.type = ValueType::LIST;
-            g_kv_store[key] = entry;
+        // list exists n not empty, behave like LPOP
+        if (g_kv_store.count(key) && !g_kv_store[key].list_val.empty()) {
+            ValueEntry &entry = g_kv_store[key];
+            std::string val = entry.list_val.front();
+            entry.list_val.erase(entry.list_val.begin());
+            handle_blocked_clients(client_fd, key, val);
+        } else {
+            // list empty n doesn't exist, block client
+            g_blocked_clients[key].push_back(client_fd);
+            std::cout << "Client " << client_fd << " blocked on key: " << key << std::endl;
         }
-
-        ValueEntry &entry = g_kv_store[key]; // type check
-        if (entry.type != ValueType::LIST) {
-            send(client_fd, "-WRONGTYPE Operation - Key holding wrong value\r\n", 67, 0);
-            return;
-        }
-
-        for (size_t i = 6; i < parts.size(); i += 2) {
-            entry.list_val.insert(entry.list_val.begin(), parts[i]);
-        }
-
-        std::string resp = ":" + std::to_string(entry.list_val.size()) + "\r\n";
-        send(client_fd, resp.c_str(), resp.length(), 0);
     }
 
     else if (command == "LPOP") {
@@ -151,7 +158,7 @@ void handle_client(int client_fd) {
 
             size_t num_to_pop = std::min((size_t)count, entry.list_val.size());
             std::string resp = "*" + std::to_string(num_to_pop) + "\r\n";
-            
+
             for (size_t i = 0; i < num_to_pop; ++i) {
                 std::string val = entry.list_val.front();
                 entry.list_val.erase(entry.list_val.begin());
