@@ -70,10 +70,10 @@ void handle_client(int client_fd) {
         }
     }
     else if (command == "RPUSH") {
+        if (parts.size() < 7) return;
         std::string key = parts[4];
-        std::string element = parts[6];
 
-        // Create list if it doesn't exist
+        // Init list if key doesn't exist
         if (g_kv_store.find(key) == g_kv_store.end()) {
             ValueEntry entry;
             entry.type = ValueType::LIST;
@@ -81,12 +81,14 @@ void handle_client(int client_fd) {
         }
 
         ValueEntry &entry = g_kv_store[key];
-        if (entry.type == ValueType::LIST) {
-            entry.list_val.push_back(element);
-            std::string resp = ":" + std::to_string(entry.list_val.size()) + "\r\n";
-            send(client_fd, resp.c_str(), resp.length(), 0);
-        } else {
+        if (entry.type != ValueType::LIST) {
             send(client_fd, "-WRONGTYPE Operation - Key holding wrong value\r\n", 67, 0);
+            return;
         }
+        for (size_t i = 6; i < parts.size(); i += 2) {
+            entry.list_val.push_back(parts[i]);
+        }
+        std::string resp = ":" + std::to_string(entry.list_val.size()) + "\r\n";
+        send(client_fd, resp.c_str(), resp.length(), 0);
     }
 }
