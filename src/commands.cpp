@@ -92,22 +92,27 @@ void handle_client(int client_fd) {
         }
         ValueEntry &entry = g_kv_store[key];
 
+        int elements_added = 0;
         for (size_t i = 6; i < parts.size(); i += 2) {
             if (command == "RPUSH") entry.list_val.push_back(parts[i]);
             else entry.list_val.insert(entry.list_val.begin(), parts[i]);
+            elements_added++;
+        }
 
-            // if clients waiting, give them element immediately
-            if (g_blocked_clients.count(key) && !g_blocked_clients[key].empty()) {
-                int waiting_fd = g_blocked_clients[key].front();
-                g_blocked_clients[key].pop_front();
-                
-                std::string popped_val = entry.list_val.front();
-                entry.list_val.erase(entry.list_val.begin());
-                
-                handle_blocked_clients(waiting_fd, key, popped_val);
-            }
+        size_t return_size = entry.list_val.size() + (g_blocked_clients[key].empty() ? 0 : std::min((size_t)elements_added, g_blocked_clients[key].size()));
+        size_t final_size_for_resp = entry.list_val.size();
+
+        while (!entry.list_val.empty() && g_blocked_clients.count(key) && !g_blocked_clients[key].empty()) {
+            int waiting_fd = g_blocked_clients[key].front();
+            g_blocked_clients[key].pop_front();
+            
+            std::string popped_val = entry.list_val.front();
+            entry.list_val.erase(entry.list_val.begin());
+            
+            handle_blocked_clients(waiting_fd, key, popped_val);
         }    
-        std::string resp = ":" + std::to_string(entry.list_val.size()) + "\r\n";
+
+        std::string resp = ":" + std::to_string(final_size_for_resp) + "\r\n";
         send(client_fd, resp.c_str(), resp.length(), 0);
     }
 
