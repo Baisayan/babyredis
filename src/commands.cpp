@@ -26,11 +26,13 @@ void handle_client(int client_fd) {
     if (command == "PING") {
         send(client_fd, "+PONG\r\n", 7, 0);
     }
+
     else if (command == "ECHO") {
         std::string msg = parts[4];
         std::string resp = "$" + std::to_string(msg.length()) + "\r\n" + msg + "\r\n";
         send(client_fd, resp.c_str(), resp.length(), 0);
     }
+
     else if (command == "SET") {
         std::string key = parts[4];
         std::string value = parts[6];
@@ -50,6 +52,7 @@ void handle_client(int client_fd) {
         g_kv_store[key] = entry;
         send(client_fd, "+OK\r\n", 5, 0);
     }
+
     else if (command == "GET") {
         std::string key = parts[4];
         if (g_kv_store.count(key)) {
@@ -69,6 +72,7 @@ void handle_client(int client_fd) {
             send(client_fd, "$-1\r\n", 5, 0); // null bulk string
         }
     }
+
     else if (command == "RPUSH") {
         if (parts.size() < 7) return;
         std::string key = parts[4];
@@ -91,6 +95,7 @@ void handle_client(int client_fd) {
         std::string resp = ":" + std::to_string(entry.list_val.size()) + "\r\n";
         send(client_fd, resp.c_str(), resp.length(), 0);
     }
+
     else if (command == "LPUSH") {
         if (parts.size() < 7) return;
         std::string key = parts[4];
@@ -115,10 +120,38 @@ void handle_client(int client_fd) {
         std::string resp = ":" + std::to_string(entry.list_val.size()) + "\r\n";
         send(client_fd, resp.c_str(), resp.length(), 0);
     }
+
+    else if (command == "LPOP") {
+        if (parts.size() < 5) return;
+        std::string key = parts[4];
+
+        // if key doesn't exist, return Null Bulk String
+        if (g_kv_store.find(key) == g_kv_store.end()) {
+            send(client_fd, "$-1\r\n", 5, 0);
+            return;
+        }
+
+        ValueEntry &entry = g_kv_store[key]; // type check
+        if (entry.type != ValueType::LIST) {
+            send(client_fd, "-WRONGTYPE Operation against a key holding the wrong kind of value\r\n", 67, 0);
+            return;
+        }
+
+        if (entry.list_val.empty()) {
+            send(client_fd, "$-1\r\n", 5, 0);
+        } else {
+            std::string val = entry.list_val.front(); // get 1st element
+            entry.list_val.erase(entry.list_val.begin()); // remove it 
+
+            std::string resp = "$" + std::to_string(val.length()) + "\r\n" + val + "\r\n";
+            send(client_fd, resp.c_str(), resp.length(), 0); // return it as resp bulk string 
+        }
+    }
+
     else if (command == "LLEN") {
         if (parts.size() < 5) return; // LLEN, key
         std::string key = parts[4];
-        
+
         if (g_kv_store.find(key) == g_kv_store.end()) {
             send(client_fd, ":0\r\n", 4, 0);
             return;
@@ -133,6 +166,7 @@ void handle_client(int client_fd) {
         std::string resp = ":" + std::to_string(entry.list_val.size()) + "\r\n";
         send(client_fd, resp.c_str(), resp.length(), 0);
     }
+
     else if (command == "LRANGE") {
         if (parts.size() < 9) return; // LRANGE, key, start, stop
 
