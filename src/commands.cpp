@@ -115,6 +115,24 @@ void handle_client(int client_fd) {
         std::string resp = ":" + std::to_string(entry.list_val.size()) + "\r\n";
         send(client_fd, resp.c_str(), resp.length(), 0);
     }
+    else if (command == "LLEN") {
+        if (parts.size() < 5) return; // LLEN, key
+        std::string key = parts[4];
+        
+        if (g_kv_store.find(key) == g_kv_store.end()) {
+            send(client_fd, ":0\r\n", 4, 0);
+            return;
+        }
+
+        ValueEntry &entry = g_kv_store[key];
+        if (entry.type != ValueType::LIST) {
+            send(client_fd, "-WRONGTYPE Operation - Key holding wrong value\r\n", 67, 0);
+            return;
+        }
+
+        std::string resp = ":" + std::to_string(entry.list_val.size()) + "\r\n";
+        send(client_fd, resp.c_str(), resp.length(), 0);
+    }
     else if (command == "LRANGE") {
         if (parts.size() < 9) return; // LRANGE, key, start, stop
 
