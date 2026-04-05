@@ -91,6 +91,30 @@ void handle_client(int client_fd) {
         std::string resp = ":" + std::to_string(entry.list_val.size()) + "\r\n";
         send(client_fd, resp.c_str(), resp.length(), 0);
     }
+    else if (command == "LPUSH") {
+        if (parts.size() < 7) return;
+        std::string key = parts[4];
+
+        // create list if it doesn't exist
+        if (g_kv_store.find(key) == g_kv_store.end()) {
+            ValueEntry entry;
+            entry.type = ValueType::LIST;
+            g_kv_store[key] = entry;
+        }
+
+        ValueEntry &entry = g_kv_store[key]; // type check
+        if (entry.type != ValueType::LIST) {
+            send(client_fd, "-WRONGTYPE Operation - Key holding wrong value\r\n", 67, 0);
+            return;
+        }
+
+        for (size_t i = 6; i < parts.size(); i += 2) {
+            entry.list_val.insert(entry.list_val.begin(), parts[i]);
+        }
+
+        std::string resp = ":" + std::to_string(entry.list_val.size()) + "\r\n";
+        send(client_fd, resp.c_str(), resp.length(), 0);
+    }
     else if (command == "LRANGE") {
         if (parts.size() < 9) return; // LRANGE, key, start, stop
 
