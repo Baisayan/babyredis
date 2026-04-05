@@ -8,7 +8,6 @@
 #include "common.h"
 
 void handle_client(int client_fd);
-std::vector<BlockedClient> g_blocked_clients_list;
 
 int main() {
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
