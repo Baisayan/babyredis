@@ -1,0 +1,22 @@
+#ifndef COMMON_H
+#define COMMON_H
+
+#include <string>
+#include <unordered_map>
+#include <chrono>
+#include <vector>
+
+enum class ValueType {STRING, LIST};
+
+struct ValueEntry {
+    ValueType type = ValueType::STRING;
+    std::string value;
+    std::vector<std::string> list_val;
+    std::chrono::time_point<std::chrono::steady_clock> expiry_time;
+    bool has_expiry = false;
+};
+
+extern std::unordered_map<std::string, ValueEntry> g_kv_store;
+std::vector<std::string> split_resp(const std::string& s);
+
+#endif
