@@ -9,6 +9,17 @@
 
 void handle_client(int client_fd);
 
+// helper to check if fd is blocked
+bool is_blocked_client(int fd) {
+    return std::any_of(
+        g_blocked_clients_list.begin(),
+        g_blocked_clients_list.end(),
+        [&](const BlockedClient& bc) {
+            return bc.fd == fd;
+        }
+    );
+}
+
 int main() {
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
     int reuse = 1;
@@ -46,16 +57,25 @@ int main() {
 
         // Check existing client sockets for data
         for (size_t i = 1; i < poll_fds.size(); ++i) {
-            if (poll_fds[i].revents & POLLIN) {
-                handle_client(poll_fds[i].fd);
+            int fd = poll_fds[i].fd;
+            bool blocked = is_blocked_client(fd);
+
+            // only read if not blocked
+            if (!blocked && (poll_fds[i].revents & POLLIN)) {
+                handle_client(fd);
             }
             
+            // check if client disconnected
             char dummy;
-            if (recv(poll_fds[i].fd, &dummy, 1, MSG_PEEK | MSG_DONTWAIT) == 0) {
-                int fd_to_close = poll_fds[i].fd;
+            int res = recv(fd, &dummy, 1, MSG_PEEK | MSG_DONTWAIT);
+            if (res == 0 && !blocked) {
+                int fd_to_close = fd;
 
                 g_blocked_clients_list.erase(
-                    std::remove_if(g_blocked_clients_list.begin(), g_blocked_clients_list.end(), [fd_to_close](const BlockedClient& bc) {
+                    std::remove_if(
+                        g_blocked_clients_list.begin(),
+                        g_blocked_clients_list.end(),
+                        [&](const BlockedClient& bc) {
                             return bc.fd == fd_to_close;
                         }),
                     g_blocked_clients_list.end()
