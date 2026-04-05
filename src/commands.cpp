@@ -139,12 +139,31 @@ void handle_client(int client_fd) {
 
         if (entry.list_val.empty()) {
             send(client_fd, "$-1\r\n", 5, 0);
-        } else {
-            std::string val = entry.list_val.front(); // get 1st element
-            entry.list_val.erase(entry.list_val.begin()); // remove it 
+            return;
+        }
 
+        if (parts.size() >= 7) {
+            long long count = std::stoll(parts[6]);
+            if (count < 0) {
+                send(client_fd, "-ERR value is out of range, must be positive\r\n", 46, 0);
+                return;
+            }
+
+            size_t num_to_pop = std::min((size_t)count, entry.list_val.size());
+            std::string resp = "*" + std::to_string(num_to_pop) + "\r\n";
+            
+            for (size_t i = 0; i < num_to_pop; ++i) {
+                std::string val = entry.list_val.front();
+                entry.list_val.erase(entry.list_val.begin());
+                resp += "$" + std::to_string(val.length()) + "\r\n" + val + "\r\n";
+            }
+            send(client_fd, resp.c_str(), resp.length(), 0);
+        } else {
+            // normal single pop
+            std::string val = entry.list_val.front();
+            entry.list_val.erase(entry.list_val.begin());
             std::string resp = "$" + std::to_string(val.length()) + "\r\n" + val + "\r\n";
-            send(client_fd, resp.c_str(), resp.length(), 0); // return it as resp bulk string 
+            send(client_fd, resp.c_str(), resp.length(), 0);
         }
     }
 
