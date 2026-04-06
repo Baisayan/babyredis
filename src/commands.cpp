@@ -31,6 +31,11 @@ void handle_client(int client_fd) {
     std::string command = parts[2];
     for (auto &c : command) c = toupper(c);
 
+    if (g_client_states.find(client_fd) == g_client_states.end()) {
+        g_client_states[client_fd] = {false, {}};
+    }
+    ClientState &state = g_client_states[client_fd];
+
     if (command == "PING") {
         send(client_fd, "+PONG\r\n", 7, 0);
     }
@@ -282,17 +287,25 @@ void handle_client(int client_fd) {
     }
 
     else if (command == "MULTI") {
-        g_client_states[client_fd].in_transaction = true;
-        g_client_states[client_fd].transaction_queue.clear();
+        state.in_transaction = true;
+        state.transaction_queue.clear();
         send(client_fd, "+OK\r\n", 5, 0);
         return;
     }
 
     else if (command == "EXEC") {
-        if (g_client_states.find(client_fd) == g_client_states.end() || 
-            !g_client_states[client_fd].in_transaction) {
+        if (!state.in_transaction) {
             send(client_fd, "-ERR EXEC without MULTI\r\n", 25, 0);
             return;
         }
+        if (state.transaction_queue.empty()) {
+            send(client_fd, "*0\r\n", 4, 0);
+        } else {
+            send(client_fd, "*0\r\n", 4, 0); 
+        }
+
+        state.in_transaction = false;
+        state.transaction_queue.clear();
+        return;
     }
 }
