@@ -4,7 +4,6 @@
 #include <algorithm>
 #include "common.h"
 
-// Init global store defined in common.h
 std::unordered_map<std::string, ValueEntry> g_kv_store;
 std::vector<BlockedClient> g_blocked_clients_list;
 std::unordered_map<int, ClientState> g_client_states;
@@ -289,5 +288,11 @@ void handle_client(int client_fd) {
         return;
     }
 
-    
+    else if (command == "EXEC") {
+        if (g_client_states.find(client_fd) == g_client_states.end() || 
+            !g_client_states[client_fd].in_transaction) {
+            send(client_fd, "-ERR EXEC without MULTI\r\n", 25, 0);
+            return;
+        }
+    }
 }
