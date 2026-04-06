@@ -15,59 +15,11 @@ void handle_blocked_clients(int client_fd, const std::string& key, const std::st
     send(client_fd, resp.c_str(), resp.length(), 0);
 }
 
-void handle_client(int client_fd) {
-    char buffer[1024];
-    int bytes_read = recv(client_fd, buffer, sizeof(buffer) - 1, 0);
-    if (bytes_read <= 0) {
-        g_client_states.erase(client_fd);
-        close(client_fd);
-        return;
-    }
-
-    buffer[bytes_read] = '\0';
-    std::vector<std::string> parts = split_resp(std::string(buffer));
-    if (parts.size() < 3) return;
-
+std::string dispatch_command(int client_fd, const std::vector<std::string>& parts, bool is_from_exec = false) {
+    if (parts.size() < 3) return "";
     std::string command = parts[2];
     for (auto &c : command) c = toupper(c);
 
-    if (g_client_states.find(client_fd) == g_client_states.end()) {
-        g_client_states[client_fd] = {false, {}};
-    }
-    ClientState &state = g_client_states[client_fd];
-
-    // Handle transaction commands which cant be queued
-    if (command == "MULTI") {
-        state.in_transaction = true;
-        state.transaction_queue.clear();
-        send(client_fd, "+OK\r\n", 5, 0);
-        return;
-    }
-
-    else if (command == "EXEC") {
-        if (!state.in_transaction) {
-            send(client_fd, "-ERR EXEC without MULTI\r\n", 25, 0);
-            return;
-        }
-        if (state.transaction_queue.empty()) {
-            send(client_fd, "*0\r\n", 4, 0);
-        } else {
-            send(client_fd, "*0\r\n", 4, 0); 
-        }
-
-        state.in_transaction = false;
-        state.transaction_queue.clear();
-        return;
-    }
-
-    // if client in transaction, queue any other command
-    else if (state.in_transaction) {
-        state.transaction_queue.push_back(parts);
-        send(client_fd, "+QUEUED\r\n", 9, 0);
-        return;
-    }
-
-    // Normal execution - Handle non-transaction commands
     if (command == "PING") {
         send(client_fd, "+PONG\r\n", 7, 0);
     }
@@ -318,4 +270,63 @@ void handle_client(int client_fd) {
         }
     }
 
+    return "-ERR unknown command\r\n";
+}
+
+void handle_client(int client_fd) {
+    char buffer[1024];
+    int bytes_read = recv(client_fd, buffer, sizeof(buffer) - 1, 0);
+    if (bytes_read <= 0) {
+        g_client_states.erase(client_fd);
+        close(client_fd);
+        return;
+    }
+
+    buffer[bytes_read] = '\0';
+    std::vector<std::string> parts = split_resp(std::string(buffer));
+    if (parts.size() < 3) return;
+
+    std::string command = parts[2];
+    for (auto &c : command) c = toupper(c);
+
+    if (g_client_states.find(client_fd) == g_client_states.end()) {
+        g_client_states[client_fd] = {false, {}};
+    }
+    ClientState &state = g_client_states[client_fd];
+
+    // Handle transaction commands which cant be queued
+    if (command == "MULTI") {
+        state.in_transaction = true;
+        state.transaction_queue.clear();
+        send(client_fd, "+OK\r\n", 5, 0);
+        return;
+    }
+
+    else if (command == "EXEC") {
+        if (!state.in_transaction) {
+            send(client_fd, "-ERR EXEC without MULTI\r\n", 25, 0);
+            return;
+        }
+        
+        std::string final_resp = "*" + std::to_string(state.transaction_queue.size()) + "\r\n";
+        for (const auto& queued_parts : state.transaction_queue) {
+            final_resp += dispatch_command(client_fd, queued_parts, true);
+        }
+        send(client_fd, final_resp.c_str(), final_resp.length(), 0);
+
+        state.in_transaction = false;
+        state.transaction_queue.clear();
+        return;
+    }
+
+    // if client in transaction, queue any other command
+    else if (state.in_transaction) {
+        state.transaction_queue.push_back(parts);
+        send(client_fd, "+QUEUED\r\n", 9, 0);
+        return;
+    }
+
+    // Normal execution - Handle non-transaction commands
+    std::string result = dispatch_command(client_fd, parts);
+    send(client_fd, result.c_str(), result.length(), 0);
 }
