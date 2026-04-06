@@ -21,16 +21,17 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
     for (auto &c : command) c = toupper(c);
 
     if (command == "PING") {
-        send(client_fd, "+PONG\r\n", 7, 0);
+        return "+PONG\r\n";
     }
 
     else if (command == "ECHO") {
+        if (parts.size() < 5) return "-ERR wrong number of arguments\r\n";
         std::string msg = parts[4];
-        std::string resp = "$" + std::to_string(msg.length()) + "\r\n" + msg + "\r\n";
-        send(client_fd, resp.c_str(), resp.length(), 0);
+        return "$" + std::to_string(msg.length()) + "\r\n" + msg + "\r\n";
     }
 
     else if (command == "SET") {
+        if (parts.size() < 7) return "-ERR wrong number of arguments\r\n";
         std::string key = parts[4];
         std::string value = parts[6];
         ValueEntry entry;
@@ -47,31 +48,28 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
             }
         }
         g_kv_store[key] = entry;
-        send(client_fd, "+OK\r\n", 5, 0);
+        return "+OK\r\n";
     }
 
     else if (command == "GET") {
+        if (parts.size() < 5) return "-ERR wrong number of arguments\r\n";
         std::string key = parts[4];
         if (g_kv_store.count(key)) {
             ValueEntry &entry = g_kv_store[key];
-
-            // expiry check
             if (entry.has_expiry && std::chrono::steady_clock::now() >= entry.expiry_time) {
                 g_kv_store.erase(key);
-                send(client_fd, "$-1\r\n", 5, 0);
+                return "$-1\r\n";
             } else if (entry.type != ValueType::STRING) {
-                send(client_fd, "-WRONGTYPE Operation - Key holding wrong value\r\n", 67, 0);
+                return "-WRONGTYPE Operation\r\n";
             } else {
-                std::string resp = "$" + std::to_string(entry.value.length()) + "\r\n" + entry.value + "\r\n";
-                send(client_fd, resp.c_str(), resp.length(), 0);
+                return "$" + std::to_string(entry.value.length()) + "\r\n" + entry.value + "\r\n";
             }
-        } else {
-            send(client_fd, "$-1\r\n", 5, 0); // null bulk string
         }
+        return "$-1\r\n";
     }
 
     else if (command == "RPUSH" || command == "LPUSH") {
-        if (parts.size() < 7) return;
+        if (parts.size() < 7) return "-ERR wrong number of arguments\r\n";
         std::string key = parts[4];
 
         // Init list if key doesn't exist
@@ -106,12 +104,11 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
             g_blocked_clients_list.erase(it);
         }
 
-        std::string resp = ":" + std::to_string(final_length) + "\r\n";
-        send(client_fd, resp.c_str(), resp.length(), 0);
+        return ":" + std::to_string(final_length) + "\r\n";
     }
 
     else if (command == "BLPOP") {
-        if (parts.size() < 7) return;
+        if (parts.size() < 7) return "-ERR wrong number of arguments\r\n";
         std::string key = parts[4];
         double timeout_sec = std::stod(parts[6]);
 
@@ -121,7 +118,7 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
             std::string val = entry.list_val.front();
             entry.list_val.erase(entry.list_val.begin());
             handle_blocked_clients(client_fd, key, val);
-            return;
+            return "";
         }
 
         // otherwise, block client
@@ -132,38 +129,24 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
             bc.has_timeout = true;
             bc.deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds((long long)(timeout_sec * 1000));
         }
-
         g_blocked_clients_list.push_back(bc);
-        return;
+        return "";
     }
 
     else if (command == "LPOP") {
-        if (parts.size() < 5) return;
+        if (parts.size() < 5) return "-ERR wrong number of arguments\r\n";
         std::string key = parts[4];
 
-        // if key doesn't exist, return Null Bulk String
-        if (g_kv_store.find(key) == g_kv_store.end()) {
-            send(client_fd, "$-1\r\n", 5, 0);
-            return;
-        }
+        if (g_kv_store.find(key) == g_kv_store.end()) return "$-1\r\n";
 
         ValueEntry &entry = g_kv_store[key]; // type check
-        if (entry.type != ValueType::LIST) {
-            send(client_fd, "-WRONGTYPE Operation against a key holding the wrong kind of value\r\n", 67, 0);
-            return;
-        }
+        if (entry.type != ValueType::LIST) return "-WRONGTYPE Operation\r\n";
 
-        if (entry.list_val.empty()) {
-            send(client_fd, "$-1\r\n", 5, 0);
-            return;
-        }
+        if (entry.list_val.empty()) return "$-1\r\n";
 
         if (parts.size() >= 7) {
             long long count = std::stoll(parts[6]);
-            if (count < 0) {
-                send(client_fd, "-ERR value is out of range, must be positive\r\n", 46, 0);
-                return;
-            }
+            if (count < 0) return "-ERR value is out of range\r\n";
 
             size_t num_to_pop = std::min((size_t)count, entry.list_val.size());
             std::string resp = "*" + std::to_string(num_to_pop) + "\r\n";
@@ -173,103 +156,70 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
                 entry.list_val.erase(entry.list_val.begin());
                 resp += "$" + std::to_string(val.length()) + "\r\n" + val + "\r\n";
             }
-            send(client_fd, resp.c_str(), resp.length(), 0);
+            return resp;
         } else {
-            // normal single pop
             std::string val = entry.list_val.front();
             entry.list_val.erase(entry.list_val.begin());
-            std::string resp = "$" + std::to_string(val.length()) + "\r\n" + val + "\r\n";
-            send(client_fd, resp.c_str(), resp.length(), 0);
+            return "$" + std::to_string(val.length()) + "\r\n" + val + "\r\n";
         }
     }
 
     else if (command == "LLEN") {
-        if (parts.size() < 5) return; // LLEN, key
+        if (parts.size() < 5) return "-ERR wrong number of arguments\r\n";
         std::string key = parts[4];
-
-        if (g_kv_store.find(key) == g_kv_store.end()) {
-            send(client_fd, ":0\r\n", 4, 0);
-            return;
-        }
+        if (g_kv_store.find(key) == g_kv_store.end()) return ":0\r\n";
 
         ValueEntry &entry = g_kv_store[key];
-        if (entry.type != ValueType::LIST) {
-            send(client_fd, "-WRONGTYPE Operation - Key holding wrong value\r\n", 67, 0);
-            return;
-        }
-
-        std::string resp = ":" + std::to_string(entry.list_val.size()) + "\r\n";
-        send(client_fd, resp.c_str(), resp.length(), 0);
+        if (entry.type != ValueType::LIST) return "-WRONGTYPE Operation\r\n";
+        return ":" + std::to_string(entry.list_val.size()) + "\r\n";
     }
 
     else if (command == "LRANGE") {
-        if (parts.size() < 9) return; // LRANGE, key, start, stop
-
+        if (parts.size() < 9) return "-ERR wrong number of arguments\r\n";
         std::string key = parts[4];
         long long start = std::stoll(parts[6]);
         long long stop = std::stoll(parts[8]);
 
-        // if key doesn't exist, return empty array
-        if (g_kv_store.find(key) == g_kv_store.end()) {
-            send(client_fd, "*0\r\n", 4, 0);
-            return;
-        }
+        if (g_kv_store.find(key) == g_kv_store.end()) return "*0\r\n";
 
         ValueEntry &entry = g_kv_store[key];
-        if (entry.type != ValueType::LIST) {
-            send(client_fd, "-WRONGTYPE Operation - Key holding wrong value\r\n", 67, 0);
-            return;
-        }
+        if (entry.type != ValueType::LIST) return "-WRONGTYPE Operation\r\n";
 
         long long list_len = (long long)entry.list_val.size();
-
         if (start < 0) start = list_len + start;
         if (start < 0) start = 0;
         if (stop < 0) stop = list_len + stop;
-
-        if (start >= list_len || start > stop) {
-            send(client_fd, "*0\r\n", 4, 0);
-            return;
-        }
+        if (start >= list_len || start > stop) return "*0\r\n";
         if (stop >= list_len) stop = list_len - 1;
 
-        // construct RESP array response n send it back
         size_t num_elements = (size_t)(stop - start + 1);
         std::string resp = "*" + std::to_string(num_elements) + "\r\n";
         for (long long i = start; i <= stop; ++i) {
             std::string val = entry.list_val[(size_t)i];
             resp += "$" + std::to_string(val.length()) + "\r\n" + val + "\r\n";
         }
-        send(client_fd, resp.c_str(), resp.length(), 0);
+        return resp;
     }
 
     else if (command == "INCR") {
-        if (parts.size() < 5) return; // INCR, key
+        if (parts.size() < 5) return "-ERR wrong number of arguments\r\n";
         std::string key = parts[4];
 
         if (g_kv_store.find(key) == g_kv_store.end()) {
-            ValueEntry entry;
-            entry.type = ValueType::STRING;
-            entry.value = "1";
-            g_kv_store[key] = entry;
-
-            send(client_fd, ":1\r\n", 4, 0);
+            g_kv_store[key] = {ValueType::STRING, "1"};
+            return ":1\r\n";
         } else {
             ValueEntry &entry = g_kv_store[key];
-
             try {
                 long long val = std::stoll(entry.value);
                 val++;
-                entry.value = std::to_string(val);
-                
-                std::string resp = ":" + entry.value + "\r\n";
-                send(client_fd, resp.c_str(), resp.length(), 0);
+                entry.value = std::to_string(val); 
+                return ":" + entry.value + "\r\n";
             } catch (const std::exception& e) {
-                send(client_fd, "-ERR value is not an integer or out of range\r\n", 46, 0);
+                return "-ERR value is not an integer or out of range\r\n";
             }
         }
     }
-
     return "-ERR unknown command\r\n";
 }
 
@@ -328,5 +278,7 @@ void handle_client(int client_fd) {
 
     // Normal execution - Handle non-transaction commands
     std::string result = dispatch_command(client_fd, parts);
-    send(client_fd, result.c_str(), result.length(), 0);
+    if (!result.empty()) {
+        send(client_fd, result.c_str(), result.length(), 0);
+    }
 }
