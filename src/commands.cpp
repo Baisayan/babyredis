@@ -252,4 +252,36 @@ void handle_client(int client_fd) {
         }
         send(client_fd, resp.c_str(), resp.length(), 0);
     }
+
+    else if (command == "INCR") {
+        if (parts.size() < 5) return; // INCR, key
+        std::string key = parts[4];
+
+        if (g_kv_store.count(key)) {
+            ValueEntry &entry = g_kv_store[key];
+
+            if (entry.type != ValueType::STRING) {
+                send(client_fd, "-WRONGTYPE Operation against Key holding wrong value\r\n", 67, 0);
+                return;
+            }
+
+            try {
+                long long val = std::stoll(entry.value);
+                val++;
+                
+                entry.value = std::to_string(val);
+                
+                std::string resp = ":" + entry.value + "\r\n";
+                send(client_fd, resp.c_str(), resp.length(), 0);
+            } catch (const std::exception& e) {
+                send(client_fd, "-ERR value is not an integer or out of range\r\n", 46, 0);
+            }
+        } else {
+            ValueEntry entry;
+            entry.type = ValueType::STRING;
+            entry.value = "1";
+            g_kv_store[key] = entry;
+            send(client_fd, ":1\r\n", 4, 0);
+        }
+    }
 }
