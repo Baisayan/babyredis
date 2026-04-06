@@ -269,6 +269,18 @@ void handle_client(int client_fd) {
         return;
     }
 
+    else if (command == "DISCARD") {
+        if (!state.in_transaction) {
+            send(client_fd, "-ERR DISCARD without MULTI\r\n", 28, 0);
+            return;
+        }
+
+        state.transaction_queue.clear();
+        state.in_transaction = false;
+        send(client_fd, "+OK\r\n", 5, 0);
+        return;
+    }
+
     // if client in transaction, queue any other command
     else if (state.in_transaction) {
         state.transaction_queue.push_back(parts);
