@@ -7,6 +7,7 @@
 // Init global store defined in common.h
 std::unordered_map<std::string, ValueEntry> g_kv_store;
 std::vector<BlockedClient> g_blocked_clients_list;
+std::unordered_map<int, ClientState> g_client_states;
 
 // notify a blocked client if key becomes available
 void handle_blocked_clients(int client_fd, const std::string& key, const std::string& value) {
@@ -19,6 +20,7 @@ void handle_client(int client_fd) {
     char buffer[1024];
     int bytes_read = recv(client_fd, buffer, sizeof(buffer) - 1, 0);
     if (bytes_read <= 0) {
+        g_client_states.erase(client_fd);
         close(client_fd);
         return;
     }
@@ -257,18 +259,19 @@ void handle_client(int client_fd) {
         if (parts.size() < 5) return; // INCR, key
         std::string key = parts[4];
 
-        if (g_kv_store.count(key)) {
-            ValueEntry &entry = g_kv_store[key];
+        if (g_kv_store.find(key) == g_kv_store.end()) {
+            ValueEntry entry;
+            entry.type = ValueType::STRING;
+            entry.value = "1";
+            g_kv_store[key] = entry;
 
-            if (entry.type != ValueType::STRING) {
-                send(client_fd, "-WRONGTYPE Operation against Key holding wrong value\r\n", 67, 0);
-                return;
-            }
+            send(client_fd, ":1\r\n", 4, 0);
+        } else {
+            ValueEntry &entry = g_kv_store[key];
 
             try {
                 long long val = std::stoll(entry.value);
                 val++;
-                
                 entry.value = std::to_string(val);
                 
                 std::string resp = ":" + entry.value + "\r\n";
@@ -276,12 +279,15 @@ void handle_client(int client_fd) {
             } catch (const std::exception& e) {
                 send(client_fd, "-ERR value is not an integer or out of range\r\n", 46, 0);
             }
-        } else {
-            ValueEntry entry;
-            entry.type = ValueType::STRING;
-            entry.value = "1";
-            g_kv_store[key] = entry;
-            send(client_fd, ":1\r\n", 4, 0);
         }
     }
+
+    else if (command == "MULTI") {
+        g_client_states[client_fd].in_transaction = true;
+        g_client_states[client_fd].transaction_queue.clear();
+        send(client_fd, "+OK\r\n", 5, 0);
+        return;
+    }
+
+    
 }

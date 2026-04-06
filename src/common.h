@@ -17,6 +17,13 @@ struct ValueEntry {
     bool has_expiry = false;
 };
 
+struct ClientState {
+    bool in_transaction = false;
+    std::vector<std::vector<std::string>> transaction_queue;
+};
+
+extern std::unordered_map<int, ClientState> g_client_states;
+
 struct BlockedClient {
     int fd;
     std::string key;

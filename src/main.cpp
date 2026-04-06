@@ -71,6 +71,7 @@ int main() {
             if (res == 0 && !blocked) {
                 int fd_to_close = fd;
 
+                g_client_states.erase(fd_to_close);
                 g_blocked_clients_list.erase(
                     std::remove_if(
                         g_blocked_clients_list.begin(),
