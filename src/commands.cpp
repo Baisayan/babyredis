@@ -36,6 +36,38 @@ void handle_client(int client_fd) {
     }
     ClientState &state = g_client_states[client_fd];
 
+    // Handle transaction commands which cant be queued
+    if (command == "MULTI") {
+        state.in_transaction = true;
+        state.transaction_queue.clear();
+        send(client_fd, "+OK\r\n", 5, 0);
+        return;
+    }
+
+    else if (command == "EXEC") {
+        if (!state.in_transaction) {
+            send(client_fd, "-ERR EXEC without MULTI\r\n", 25, 0);
+            return;
+        }
+        if (state.transaction_queue.empty()) {
+            send(client_fd, "*0\r\n", 4, 0);
+        } else {
+            send(client_fd, "*0\r\n", 4, 0); 
+        }
+
+        state.in_transaction = false;
+        state.transaction_queue.clear();
+        return;
+    }
+
+    // if client in transaction, queue any other command
+    else if (state.in_transaction) {
+        state.transaction_queue.push_back(parts);
+        send(client_fd, "+QUEUED\r\n", 9, 0);
+        return;
+    }
+
+    // Normal execution - Handle non-transaction commands
     if (command == "PING") {
         send(client_fd, "+PONG\r\n", 7, 0);
     }
@@ -286,32 +318,4 @@ void handle_client(int client_fd) {
         }
     }
 
-    else if (command == "MULTI") {
-        state.in_transaction = true;
-        state.transaction_queue.clear();
-        send(client_fd, "+OK\r\n", 5, 0);
-        return;
-    }
-
-    else if (command == "EXEC") {
-        if (!state.in_transaction) {
-            send(client_fd, "-ERR EXEC without MULTI\r\n", 25, 0);
-            return;
-        }
-        if (state.transaction_queue.empty()) {
-            send(client_fd, "*0\r\n", 4, 0);
-        } else {
-            send(client_fd, "*0\r\n", 4, 0); 
-        }
-
-        state.in_transaction = false;
-        state.transaction_queue.clear();
-        return;
-    }
-
-    else if (state.in_transaction) {
-        state.transaction_queue.push_back(parts);
-        send(client_fd, "+QUEUED\r\n", 9, 0);
-        return;
-    }
 }
