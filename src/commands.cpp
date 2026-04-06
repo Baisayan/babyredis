@@ -308,4 +308,10 @@ void handle_client(int client_fd) {
         state.transaction_queue.clear();
         return;
     }
+
+    else if (state.in_transaction) {
+        state.transaction_queue.push_back(parts);
+        send(client_fd, "+QUEUED\r\n", 9, 0);
+        return;
+    }
 }
