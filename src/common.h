@@ -13,6 +13,8 @@ struct RedisConfig {
 };
 extern RedisConfig g_config;
 
+void load_rdb();
+
 enum class ValueType {STRING, LIST};
 
 struct ValueEntry {

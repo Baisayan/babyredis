@@ -31,6 +31,8 @@ int main(int argc, char** argv) {
         }
     }
 
+    load_rdb();
+
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
     int reuse = 1;
     setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));

@@ -244,6 +244,20 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
         }
     }
 
+    else if (command == "KEYS") {
+        if (parts.size() < 5) return "-ERR wrong number of arguments\r\n";
+        std::string pattern = parts[4]; // Only supporting "*" for now
+
+        if (pattern == "*") {
+            std::string resp = "*" + std::to_string(g_kv_store.size()) + "\r\n";
+            for (auto const& [key, val] : g_kv_store) {
+                resp += "$" + std::to_string(key.length()) + "\r\n" + key + "\r\n";
+            }
+            return resp;
+        }
+        return "*0\r\n";
+    }
+
     return "-ERR unknown command\r\n";
 }
 
