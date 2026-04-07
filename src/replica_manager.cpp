@@ -39,21 +39,25 @@ void initiate_replica_handshake() {
         return;
     }
 
-    // send REPLCONF listening-port to Master so it knows where to connect back for replication
+    // send REPLCONF listening-port
     std::string port_str = std::to_string(g_config.port);
     std::string replconf1 = "*3\r\n$8\r\nREPLCONF\r\n$14\r\nlistening-port\r\n$" + 
                             std::to_string(port_str.length()) + "\r\n" + port_str + "\r\n";
     
     if (!send_and_wait(master_fd, replconf1)) {
-        close(master_fd);
-        return;
+        close(master_fd); return;
     }
 
-    // send REPLCONF capa psync2 to indicate support for PSYNC2
-    std::string replconf2 = "*3\r\n$8\r\nREPLCONF\r\n$4\r\ncapa\r\n$6\r\npsync2\r\n"; 
-    if (!send_and_wait(master_fd, replconf2)) {
-        close(master_fd);
-        return;
+    // send REPLCONF capa psync2
+    if (!send_and_wait(master_fd, "*3\r\n$8\r\nREPLCONF\r\n$4\r\ncapa\r\n$6\r\npsync2\r\n")) {
+        close(master_fd); return;
+    }
+
+    std::string psync_cmd = "*3\r\n$5\r\nPSYNC\r\n$1\r\n?\r\n$2\r\n-1\r\n";
+    if (send(master_fd, psync_cmd.c_str(), psync_cmd.length(), 0) < 0) {
+        std::cerr << "Failed to send PSYNC" << std::endl;
+    } else {
+        std::cout << "Sent PSYNC ? -1 to Master." << std::endl;
     }
 
     close(master_fd); 

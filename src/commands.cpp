@@ -281,6 +281,11 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
         return "+OK\r\n";
     }
 
+    else if (command == "PSYNC") {
+        std::string resp = "+FULLRESYNC " + g_config.master_replid + " 0\r\n";
+        return resp;
+    }
+
     return "-ERR unknown command\r\n";
 }
 
