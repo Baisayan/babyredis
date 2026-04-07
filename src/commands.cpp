@@ -328,73 +328,87 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
 }
 
 void handle_client(int client_fd) {
-    char buffer[1024];
+    char buffer[4096];
     int bytes_read = recv(client_fd, buffer, sizeof(buffer) - 1, 0);
     if (bytes_read <= 0) {
         g_client_states.erase(client_fd);
-        close(client_fd);
-        return;
+        close(client_fd); return;
     }
-
     buffer[bytes_read] = '\0';
-    std::vector<std::string> parts = split_resp(std::string(buffer));
-    if (parts.size() < 3) return;
 
-    std::string command = parts[2];
-    for (auto &c : command) c = toupper(c);
+    std::string data(buffer, bytes_read);
+    std::vector<std::string> all_parts = split_resp(data);
 
-    if (g_client_states.find(client_fd) == g_client_states.end()) {
-        g_client_states[client_fd] = {false, {}};
-    }
-    ClientState &state = g_client_states[client_fd];
-
-    // Handle transaction commands which cant be queued
-    if (command == "MULTI") {
-        state.in_transaction = true;
-        state.transaction_queue.clear();
-        send(client_fd, "+OK\r\n", 5, 0);
-        return;
-    }
-
-    else if (command == "EXEC") {
-        if (!state.in_transaction) {
-            send(client_fd, "-ERR EXEC without MULTI\r\n", 25, 0);
-            return;
+    size_t i = 0;
+    while (i < all_parts.size()) {
+        if (all_parts[i][0] != '*') {
+            i++; continue; 
         }
+
+        // how many elements in this specific command array
+        int num_elements = std::stoi(all_parts[i].substr(1));
+        std::vector<std::string> parts;
         
-        std::string final_resp = "*" + std::to_string(state.transaction_queue.size()) + "\r\n";
-        for (const auto& queued_parts : state.transaction_queue) {
-            final_resp += dispatch_command(client_fd, queued_parts, true);
-        }
-        send(client_fd, final_resp.c_str(), final_resp.length(), 0);
-
-        state.in_transaction = false;
-        state.transaction_queue.clear();
-        return;
-    }
-
-    else if (command == "DISCARD") {
-        if (!state.in_transaction) {
-            send(client_fd, "-ERR DISCARD without MULTI\r\n", 28, 0);
-            return;
+        // extract header and n elements
+        size_t elements_to_capture = 1 + (num_elements * 2); 
+        for (size_t j = 0; j < elements_to_capture && i < all_parts.size(); ++j) {
+            parts.push_back(all_parts[i++]);
         }
 
-        state.transaction_queue.clear();
-        state.in_transaction = false;
-        send(client_fd, "+OK\r\n", 5, 0);
-        return;
-    }
+        if (parts.size() < 3) continue;
 
-    // if client in transaction, queue any other command
-    else if (state.in_transaction) {
-        state.transaction_queue.push_back(parts);
-        send(client_fd, "+QUEUED\r\n", 9, 0);
-        return;
-    }
+        std::string command = parts[2];
+        for (auto &c : command) c = toupper(c);
 
-    // Normal execution - Handle non-transaction commands
-    std::string result = dispatch_command(client_fd, parts);
-    if (!result.empty()) {
-        send(client_fd, result.c_str(), result.length(), 0);
+        if (g_client_states.find(client_fd) == g_client_states.end()) {
+            g_client_states[client_fd] = {false, {}};
+        }
+        ClientState &state = g_client_states[client_fd];
+
+        // transactions command handling
+        if (command == "MULTI") {
+            state.in_transaction = true;
+            state.transaction_queue.clear();
+            if (client_fd != g_master_fd) send(client_fd, "+OK\r\n", 5, 0);
+            continue;
+        }
+
+        else if (command == "EXEC") {
+            if (!state.in_transaction) {
+                if (client_fd != g_master_fd) send(client_fd, "-ERR EXEC without MULTI\r\n", 25, 0);
+                continue;
+            }
+            std::string final_resp = "*" + std::to_string(state.transaction_queue.size()) + "\r\n";
+            for (const auto& queued_parts : state.transaction_queue) {
+                final_resp += dispatch_command(client_fd, queued_parts, true);
+            }
+            if (client_fd != g_master_fd) send(client_fd, final_resp.c_str(), final_resp.length(), 0);
+            state.in_transaction = false;
+            state.transaction_queue.clear();
+            continue;
+        }
+
+        else if (command == "DISCARD") {
+            if (!state.in_transaction) {
+                if (client_fd != g_master_fd) send(client_fd, "-ERR DISCARD without MULTI\r\n", 28, 0);
+                continue;
+            }
+            state.transaction_queue.clear();
+            state.in_transaction = false;
+            if (client_fd != g_master_fd) send(client_fd, "+OK\r\n", 5, 0);
+            continue;
+        }
+
+        else if (state.in_transaction) {
+            state.transaction_queue.push_back(parts);
+            if (client_fd != g_master_fd) send(client_fd, "+QUEUED\r\n", 9, 0);
+            continue;
+        }
+
+        // normal command handling
+        std::string result = dispatch_command(client_fd, parts);
+        if (!result.empty() && client_fd != g_master_fd) {
+            send(client_fd, result.c_str(), result.length(), 0);
+        }
     }
 }

@@ -54,12 +54,15 @@ int main(int argc, char** argv) {
     }
     listen(server_fd, 5);
 
-    if (g_config.is_replica) {
-        initiate_replica_handshake();
-    }
-
     std::vector<pollfd> poll_fds;
     poll_fds.push_back({server_fd, POLLIN, 0});
+
+    if (g_config.is_replica) {
+        int m_fd = initiate_replica_handshake();
+        if (m_fd != -1) {
+            poll_fds.push_back({m_fd, POLLIN, 0});
+        }
+    }
 
     std::cout << "BabyRedis server listening on port " << g_config.port << "...\n";
 
