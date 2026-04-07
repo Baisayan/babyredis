@@ -10,9 +10,16 @@ std::unordered_map<int, ClientState> g_client_states;
 std::vector<int> g_replicas;
 
 void propagate_to_replicas(const std::vector<std::string>& parts) {
-    std::string resp = "*" + std::to_string(parts.size() / 2) + "\r\n";
-    for (size_t i = 1; i < parts.size(); i += 2) {
-        resp += "$" + std::to_string(parts[i].length()) + "\r\n" + parts[i] + "\r\n";
+    if (parts.empty()) return;
+
+    std::vector<std::string> values;
+    for (size_t i = 2; i < parts.size(); i += 2) {
+        values.push_back(parts[i]);
+    }
+
+    std::string resp = "*" + std::to_string(values.size()) + "\r\n";
+    for (const auto& val : values) {
+        resp += "$" + std::to_string(val.length()) + "\r\n" + val + "\r\n";
     }
 
     for (int replica_fd : g_replicas) {
