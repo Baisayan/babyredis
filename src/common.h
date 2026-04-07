@@ -23,6 +23,8 @@ extern RedisConfig g_config;
 
 void load_rdb();
 
+void initiate_replica_handshake();
+
 enum class ValueType {STRING, LIST};
 
 struct ValueEntry {

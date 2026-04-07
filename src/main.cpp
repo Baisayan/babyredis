@@ -54,6 +54,10 @@ int main(int argc, char** argv) {
     }
     listen(server_fd, 5);
 
+    if (g_config.is_replica) {
+        initiate_replica_handshake();
+    }
+
     std::vector<pollfd> poll_fds;
     poll_fds.push_back({server_fd, POLLIN, 0});
 
