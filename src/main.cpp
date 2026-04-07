@@ -28,6 +28,8 @@ int main(int argc, char** argv) {
             g_config.dir = argv[++i];
         } else if (arg == "--dbfilename" && i + 1 < argc) {
             g_config.dbfilename = argv[++i];
+        } else if (arg == "--port" && i + 1 < argc) {
+            g_config.port = std::stoi(argv[++i]);
         }
     }
 
@@ -37,14 +39,17 @@ int main(int argc, char** argv) {
     int reuse = 1;
     setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
 
-    struct sockaddr_in addr = {AF_INET, htons(6379), INADDR_ANY};
-    bind(server_fd, (struct sockaddr*)&addr, sizeof(addr));
+    struct sockaddr_in addr = {AF_INET, htons(g_config.port), INADDR_ANY};
+    if (bind(server_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        std::cerr << "Failed to bind to port " << g_config.port << std::endl;
+        return 1;
+    }
     listen(server_fd, 5);
 
     std::vector<pollfd> poll_fds;
     poll_fds.push_back({server_fd, POLLIN, 0});
 
-    std::cout << "BabyRedis server listening on 6379...\n";
+    std::cout << "BabyRedis server listening on port " << g_config.port << "...\n";
 
     while (true) {
         if (poll(poll_fds.data(), poll_fds.size(), 10) < 0) break;

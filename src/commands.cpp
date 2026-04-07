@@ -54,6 +54,7 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
     else if (command == "GET") {
         if (parts.size() < 5) return "-ERR wrong number of arguments\r\n";
         std::string key = parts[4];
+
         if (g_kv_store.count(key)) {
             ValueEntry &entry = g_kv_store[key];
             if (entry.has_expiry && std::chrono::steady_clock::now() >= entry.expiry_time) {
@@ -65,6 +66,7 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
                 return "$" + std::to_string(entry.value.length()) + "\r\n" + entry.value + "\r\n";
             }
         }
+        
         return "$-1\r\n";
     }
 
@@ -246,7 +248,7 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
 
     else if (command == "KEYS") {
         if (parts.size() < 5) return "-ERR wrong number of arguments\r\n";
-        std::string pattern = parts[4]; // Only supporting "*" for now
+        std::string pattern = parts[4];
 
         if (pattern == "*") {
             std::string resp = "*" + std::to_string(g_kv_store.size()) + "\r\n";
