@@ -220,6 +220,30 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
             }
         }
     }
+    
+    else if (command == "CONFIG") {
+        if (parts.size() < 7) return "-ERR wrong number of arguments\r\n";
+        
+        std::string sub_command = parts[4];
+        for (auto &c : sub_command) c = toupper(c);
+
+        if (sub_command == "GET") {
+            std::string param = parts[6];
+            std::string value = "";
+
+            if (param == "dir") {
+                value = g_config.dir;
+            } else if (param == "dbfilename") {
+                value = g_config.dbfilename;
+            }
+
+            std::string resp = "*2\r\n";
+            resp += "$" + std::to_string(param.length()) + "\r\n" + param + "\r\n";
+            resp += "$" + std::to_string(value.length()) + "\r\n" + value + "\r\n";
+            return resp;
+        }
+    }
+
     return "-ERR unknown command\r\n";
 }
 

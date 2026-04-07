@@ -8,6 +8,7 @@
 #include "common.h"
 
 void handle_client(int client_fd);
+RedisConfig g_config;
 
 // helper to check if fd is blocked
 bool is_blocked_client(int fd) {
@@ -20,7 +21,16 @@ bool is_blocked_client(int fd) {
     );
 }
 
-int main() {
+int main(int argc, char** argv) {
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--dir" && i + 1 < argc) {
+            g_config.dir = argv[++i];
+        } else if (arg == "--dbfilename" && i + 1 < argc) {
+            g_config.dbfilename = argv[++i];
+        }
+    }
+
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
     int reuse = 1;
     setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));

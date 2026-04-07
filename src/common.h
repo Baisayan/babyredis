@@ -7,6 +7,12 @@
 #include <vector>
 #include <deque>
 
+struct RedisConfig {
+    std::string dir;
+    std::string dbfilename;
+};
+extern RedisConfig g_config;
+
 enum class ValueType {STRING, LIST};
 
 struct ValueEntry {
