@@ -24,6 +24,7 @@ extern RedisConfig g_config;
 void load_rdb();
 
 void initiate_replica_handshake();
+extern std::vector<int> g_replicas;
 
 enum class ValueType {STRING, LIST};
 

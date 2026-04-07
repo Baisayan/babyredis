@@ -100,6 +100,10 @@ int main(int argc, char** argv) {
             if (res == 0 && !blocked) {
                 int fd_to_close = fd;
 
+                g_replicas.erase(
+                    std::remove(g_replicas.begin(), g_replicas.end(), fd_to_close),
+                    g_replicas.end()
+                );
                 g_client_states.erase(fd_to_close);
                 g_blocked_clients_list.erase(
                     std::remove_if(

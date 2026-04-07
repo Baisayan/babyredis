@@ -7,6 +7,18 @@
 std::unordered_map<std::string, ValueEntry> g_kv_store;
 std::vector<BlockedClient> g_blocked_clients_list;
 std::unordered_map<int, ClientState> g_client_states;
+std::vector<int> g_replicas;
+
+void propagate_to_replicas(const std::vector<std::string>& parts) {
+    std::string resp = "*" + std::to_string(parts.size() / 2) + "\r\n";
+    for (size_t i = 1; i < parts.size(); i += 2) {
+        resp += "$" + std::to_string(parts[i].length()) + "\r\n" + parts[i] + "\r\n";
+    }
+
+    for (int replica_fd : g_replicas) {
+        send(replica_fd, resp.c_str(), resp.length(), 0);
+    }
+}
 
 // notify a blocked client if key becomes available
 void handle_blocked_clients(int client_fd, const std::string& key, const std::string& value) {
@@ -48,6 +60,7 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
             }
         }
         g_kv_store[key] = entry;
+        if (!is_from_exec) propagate_to_replicas(parts);
         return "+OK\r\n";
     }
 
@@ -300,6 +313,7 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
 
         // send raw binary contents
         send(client_fd, rdb_binary.data(), rdb_binary.size(), 0);
+        g_replicas.push_back(client_fd);
         return "";
     }
 
