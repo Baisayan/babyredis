@@ -269,6 +269,10 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
 
         std::string role = g_config.is_replica ? "slave" : "master";
         std::string info_content = "role:" + role + "\n";
+
+        info_content += "master_replid:" + g_config.master_replid + "\n";
+        info_content += "master_repl_offset:" + std::to_string(g_config.master_repl_offset) + "\n";
+        
         std::string resp = "$" + std::to_string(info_content.length()) + "\r\n" + info_content + "\r\n";
         return resp;
     }
