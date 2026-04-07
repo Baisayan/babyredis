@@ -282,8 +282,25 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
     }
 
     else if (command == "PSYNC") {
-        std::string resp = "+FULLRESYNC " + g_config.master_replid + " 0\r\n";
-        return resp;
+        std::string full_resync = "+FULLRESYNC " + g_config.master_replid + " 0\r\n";
+        send(client_fd, full_resync.c_str(), full_resync.length(), 0);
+
+        std::string hex_rdb = "524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000ff10aa32556c03d1ad";
+        
+        std::vector<char> rdb_binary;
+        for (size_t i = 0; i < hex_rdb.length(); i += 2) {
+            std::string byteString = hex_rdb.substr(i, 2);
+            char byte = (char)strtol(byteString.c_str(), NULL, 16);
+            rdb_binary.push_back(byte);
+        }
+
+        // send the length header
+        std::string header = "$" + std::to_string(rdb_binary.size()) + "\r\n";
+        send(client_fd, header.c_str(), header.length(), 0);
+
+        // send raw binary contents
+        send(client_fd, rdb_binary.data(), rdb_binary.size(), 0);
+        return "";
     }
 
     return "-ERR unknown command\r\n";
