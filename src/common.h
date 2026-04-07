@@ -11,6 +11,10 @@ struct RedisConfig {
     std::string dir;
     std::string dbfilename;
     int port = 6379;
+
+    bool is_replica = false;
+    std::string master_host;
+    int master_port;
 };
 extern RedisConfig g_config;
 
