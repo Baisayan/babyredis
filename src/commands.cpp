@@ -260,6 +260,18 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
         return "*0\r\n";
     }
 
+    else if (command == "INFO") {
+        std::string section = "";
+        if (parts.size() >= 5) {
+            section = parts[4];
+            for (auto &c : section) c = toupper(c);
+        }
+
+        std::string info_content = "role:master\n";
+        std::string resp = "$" + std::to_string(info_content.length()) + "\r\n" + info_content + "\r\n";
+        return resp;
+    }
+
     return "-ERR unknown command\r\n";
 }
 
