@@ -52,6 +52,7 @@ struct ClientState {
     bool in_transaction = false;
     std::vector<std::vector<std::string>> transaction_queue;
     std::vector<std::string> subscribed_channels;
+    std::vector<std::string> watched_keys;
 };
 
 extern std::unordered_map<int, ClientState> g_client_states;

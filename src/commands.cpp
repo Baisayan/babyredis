@@ -477,6 +477,22 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
         return full_resp;
     }
 
+    else if (command == "WATCH") {
+        if (parts.size() < 5) return "-ERR wrong number of arguments\r\n";
+        ClientState &state = g_client_states[client_fd];
+        
+        for (size_t i = 4; i < parts.size(); i += 2) {
+            std::string key = parts[i];
+            if (std::find(state.watched_keys.begin(), 
+                          state.watched_keys.end(), 
+                          key) == state.watched_keys.end()) {
+                state.watched_keys.push_back(key);
+            }
+        }
+
+        return "+OK\r\n";
+    }
+
     return "-ERR unknown command\r\n";
 }
 
