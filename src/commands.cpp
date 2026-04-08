@@ -420,11 +420,21 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
     else if (command == "PUBLISH") {
         if (parts.size() < 7) return "-ERR wrong number of arguments\r\n";
         std::string channel = parts[4];
+        std::string message = parts[6];
+
+        std::string resp = "*3\r\n";
+        resp += "$7\r\nmessage\r\n";
+        resp += "$" + std::to_string(channel.length()) + "\r\n" + channel + "\r\n";
+        resp += "$" + std::to_string(message.length()) + "\r\n" + message + "\r\n";
         int subscriber_count = 0;
 
         for (auto const& [fd, state] : g_client_states) {
-            auto it = std::find(state.subscribed_channels.begin(), state.subscribed_channels.end(), channel);  
+            auto it = std::find(state.subscribed_channels.begin(),
+                                state.subscribed_channels.end(),
+                                channel);
+
             if (it != state.subscribed_channels.end()) {
+                send(fd, resp.c_str(), resp.length(), 0);
                 subscriber_count++;
             }
         }
