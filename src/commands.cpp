@@ -334,6 +334,16 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
         return "";
     }
 
+    else if (command == "WAIT") {
+        if (parts.size() < 7) return "-ERR wrong number of arguments\r\n";
+
+        int num_replicas_requested = std::stoi(parts[4]);
+        int timeout_ms = std::stoi(parts[6]);
+
+        int acked_replicas = g_replicas.size();
+        return ":" + std::to_string(acked_replicas) + "\r\n";
+    }
+
     return "-ERR unknown command\r\n";
 }
 
