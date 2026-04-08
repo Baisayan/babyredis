@@ -11,15 +11,24 @@
 void handle_client(int client_fd);
 RedisConfig g_config;
 
+std::vector<WaitingClient> g_waiting_clients;
+std::unordered_map<int, long long> g_replica_offsets;
+
 // helper to check if fd is blocked
 bool is_blocked_client(int fd) {
-    return std::any_of(
+    bool blocked_blpop = std::any_of(
         g_blocked_clients_list.begin(),
         g_blocked_clients_list.end(),
-        [&](const BlockedClient& bc) {
-            return bc.fd == fd;
-        }
+        [&](const BlockedClient& bc) {return bc.fd == fd;}
     );
+
+    bool blocked_wait = std::any_of(
+        g_waiting_clients.begin(),
+        g_waiting_clients.end(),
+        [&](const WaitingClient& wc) { return wc.fd == fd; }
+    );
+
+    return blocked_blpop || blocked_wait;
 }
 
 int main(int argc, char** argv) {
@@ -69,8 +78,8 @@ int main(int argc, char** argv) {
 
     while (true) {
         if (poll(poll_fds.data(), poll_fds.size(), 10) < 0) break;
-
         auto now = std::chrono::steady_clock::now();
+
         for (auto it = g_blocked_clients_list.begin(); it != g_blocked_clients_list.end(); ) {
             if (it->has_timeout && now >= it->deadline) {
                 send(it->fd, "*-1\r\n", 5, 0); // Send null array
@@ -78,6 +87,20 @@ int main(int argc, char** argv) {
             } else {
                 ++it;
             }
+        }
+
+        for (auto it = g_waiting_clients.begin(); it != g_waiting_clients.end(); ) {
+            int current_sync_count = 0;
+            for (int replica_fd : g_replicas) {
+                if (g_replica_offsets[replica_fd] >= it->target_offset) {
+                    current_sync_count++;
+                }
+            }
+            if (current_sync_count >= it->target_count || now >= it->deadline) {
+                std::string resp = ":" + std::to_string(current_sync_count) + "\r\n";
+                send(it->fd, resp.c_str(), resp.length(), 0);
+                it = g_waiting_clients.erase(it);
+            } else { ++it; }
         }
 
         // Check if the server socket has a new connection
@@ -112,15 +135,18 @@ int main(int argc, char** argv) {
                     std::remove(g_replicas.begin(), g_replicas.end(), fd_to_close),
                     g_replicas.end()
                 );
+                g_replica_offsets.erase(fd_to_close);
                 g_client_states.erase(fd_to_close);
+
                 g_blocked_clients_list.erase(
-                    std::remove_if(
-                        g_blocked_clients_list.begin(),
-                        g_blocked_clients_list.end(),
-                        [&](const BlockedClient& bc) {
-                            return bc.fd == fd_to_close;
-                        }),
+                    std::remove_if(g_blocked_clients_list.begin(), g_blocked_clients_list.end(),
+                        [&](const BlockedClient& bc) { return bc.fd == fd_to_close; }),
                     g_blocked_clients_list.end()
+                );
+                g_waiting_clients.erase(
+                    std::remove_if(g_waiting_clients.begin(), g_waiting_clients.end(),
+                        [&](const WaitingClient& wc) { return wc.fd == fd_to_close; }),
+                    g_waiting_clients.end()
                 );
 
                 close(fd_to_close);

@@ -22,6 +22,8 @@ void propagate_to_replicas(const std::vector<std::string>& parts) {
         resp += "$" + std::to_string(val.length()) + "\r\n" + val + "\r\n";
     }
 
+    g_config.master_repl_offset += resp.length();
+
     for (int replica_fd : g_replicas) {
         send(replica_fd, resp.c_str(), resp.length(), 0);
     }
@@ -307,6 +309,12 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
                 return "*3\r\n$8\r\nREPLCONF\r\n$3\r\nACK\r\n$" + 
                        std::to_string(offset_str.length()) + "\r\n" + offset_str + "\r\n";
             }
+
+            else if (sub_command == "ACK") {
+                long long offset = std::stoll(parts[6]);
+                g_replica_offsets[client_fd] = offset;
+                return "";
+            }
         }
         return "+OK\r\n";
     }
@@ -327,21 +335,42 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
         // send the length header
         std::string header = "$" + std::to_string(rdb_binary.size()) + "\r\n";
         send(client_fd, header.c_str(), header.length(), 0);
-
-        // send raw binary contents
         send(client_fd, rdb_binary.data(), rdb_binary.size(), 0);
+
         g_replicas.push_back(client_fd);
+        g_replica_offsets[client_fd] = 0;
         return "";
     }
 
     else if (command == "WAIT") {
         if (parts.size() < 7) return "-ERR wrong number of arguments\r\n";
-
         int num_replicas_requested = std::stoi(parts[4]);
         int timeout_ms = std::stoi(parts[6]);
 
-        int acked_replicas = g_replicas.size();
-        return ":" + std::to_string(acked_replicas) + "\r\n";
+        int in_sync = 0;
+        for (int replica_fd : g_replicas) {
+            if (g_replica_offsets[replica_fd] >= g_config.master_repl_offset) {
+                in_sync++;
+            }
+        }
+
+        if (in_sync >= num_replicas_requested || g_config.master_repl_offset == 0) {
+            return ":" + std::to_string(in_sync) + "\r\n";
+        }
+
+        std::string getack = "*3\r\n$8\r\nREPLCONF\r\n$6\r\nGETACK\r\n$1\r\n*\r\n";
+        for (int replica_fd : g_replicas) {
+            send(replica_fd, getack.c_str(), getack.length(), 0);
+        }
+
+        WaitingClient wc;
+        wc.fd = client_fd;
+        wc.target_count = num_replicas_requested;
+        wc.target_offset = g_config.master_repl_offset;
+        wc.deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+        g_waiting_wait_clients.push_back(wc);
+
+        return "";
     }
 
     return "-ERR unknown command\r\n";
