@@ -441,6 +441,42 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
         return ":" + std::to_string(subscriber_count) + "\r\n";
     }
 
+    else if (command == "UNSUBSCRIBE") {
+        ClientState &state = g_client_states[client_fd];
+        std::string full_resp = "";
+
+        if (parts.size() < 5) {
+             std::vector<std::string> channels_to_remove = state.subscribed_channels;
+             for (const auto& channel : channels_to_remove) {
+                 state.subscribed_channels.erase(
+                     std::remove(state.subscribed_channels.begin(), state.subscribed_channels.end(), channel),
+                     state.subscribed_channels.end()
+                 );
+                 full_resp += "*3\r\n$11\r\nunsubscribe\r\n$" + std::to_string(channel.length()) + 
+                              "\r\n" + channel + "\r\n:" + std::to_string(state.subscribed_channels.size()) + "\r\n";
+             }
+             if (full_resp.empty()) return "*3\r\n$11\r\nunsubscribe\r\n$-1\r\n:0\r\n";
+             return full_resp;
+        }
+
+        for (size_t i = 4; i < parts.size(); i += 2) {
+            std::string channel = parts[i];
+
+            auto it = std::find(state.subscribed_channels.begin(), state.subscribed_channels.end(), channel);
+            if (it != state.subscribed_channels.end()) {
+                state.subscribed_channels.erase(it);
+            }
+
+            std::string count_str = std::to_string(state.subscribed_channels.size());
+            full_resp += "*3\r\n";
+            full_resp += "$11\r\nunsubscribe\r\n";
+            full_resp += "$" + std::to_string(channel.length()) + "\r\n" + channel + "\r\n";
+            full_resp += ":" + count_str + "\r\n";
+        }
+        
+        return full_resp;
+    }
+
     return "-ERR unknown command\r\n";
 }
 
