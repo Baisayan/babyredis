@@ -344,12 +344,7 @@ void handle_client(int client_fd) {
             i++; continue; 
         }
 
-        int num_elements = 0;
-        try {
-            num_elements = std::stoi(all_parts[i].substr(1));
-        } catch (const std::exception& e) {
-            i++; continue; 
-        }
+        int num_elements = std::stoi(all_parts[i].substr(1));
         std::vector<std::string> parts;
         
         // extract header and n elements
