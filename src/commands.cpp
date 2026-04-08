@@ -2,6 +2,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <algorithm>
+#include <vector>
 #include "common.h"
 
 std::unordered_map<std::string, ValueEntry> g_kv_store;
@@ -11,11 +12,8 @@ std::vector<int> g_replicas;
 
 void propagate_to_replicas(const std::vector<std::string>& parts) {
     if (parts.empty()) return;
-
     std::vector<std::string> values;
-    for (size_t i = 2; i < parts.size(); i += 2) {
-        values.push_back(parts[i]);
-    }
+    for (size_t i = 2; i < parts.size(); i += 2) values.push_back(parts[i]);
 
     std::string resp = "*" + std::to_string(values.size()) + "\r\n";
     for (const auto& val : values) {
@@ -23,7 +21,6 @@ void propagate_to_replicas(const std::vector<std::string>& parts) {
     }
 
     g_config.master_repl_offset += resp.length();
-
     for (int replica_fd : g_replicas) {
         send(replica_fd, resp.c_str(), resp.length(), 0);
     }
@@ -38,33 +35,73 @@ void handle_blocked_clients(int client_fd, const std::string& key, const std::st
 
 std::string dispatch_command(int client_fd, const std::vector<std::string>& parts, bool is_from_exec = false) {
     if (parts.size() < 3) return "";
-    std::string command = parts[2];
-    std::string original_command = command;
+
+    std::string original_cmd= parts[2];
+    std::string command = original_cmd;
     for (auto &c : command) c = toupper(c);
 
     ClientState &state = g_client_states[client_fd];
+
     bool is_subscribed = !state.subscribed_channels.empty();
 
     if (is_subscribed) {
-        if (command != "SUBSCRIBE" && 
-            command != "UNSUBSCRIBE" && 
-            command != "PSUBSCRIBE" && 
-            command != "PUNSUBSCRIBE" && 
-            command != "PING" && 
-            command != "QUIT") {
-            
-            return "-ERR Can't execute '" + original_command + "': only (P|S)SUBSCRIBE / (P|S)UNSUBSCRIBE / PING / QUIT / RESET are allowed in this context\r\n";
+        if (command != "SUBSCRIBE" && command != "UNSUBSCRIBE" && command != "PSUBSCRIBE" && 
+            command != "PUNSUBSCRIBE" && command != "PING" && command != "QUIT") {
+            return "-ERR Can't execute '" + original_cmd + "': only (P|S)SUBSCRIBE / (P|S)UNSUBSCRIBE / PING / QUIT are allowed in this context\r\n";
         }
     }
 
-    if (command == "PING") {
-        ClientState &state = g_client_states[client_fd];
+    if (state.in_transaction && !is_from_exec && command != "EXEC" && command != "DISCARD" && command != "MULTI" && command != "QUIT") {
+        if (command == "WATCH") return "-ERR WATCH inside MULTI is not allowed\r\n";
+        state.transaction_queue.push_back(parts);
+        return "+QUEUED\r\n";
+    }
 
-        if (!state.subscribed_channels.empty()) {
-            return "*2\r\n$4\r\npong\r\n$0\r\n\r\n";
-        } else {
-            return "+PONG\r\n";
+    if (command == "PING") {
+        if (is_subscribed) return "*2\r\n$4\r\npong\r\n$0\r\n\r\n";
+        return "+PONG\r\n";
+    }
+
+    else if (command == "MULTI") {
+        if (state.in_transaction) return "-ERR MULTI calls can not be nested\r\n";
+        state.in_transaction = true;
+        state.transaction_queue.clear();
+        return "+OK\r\n";
+    }
+
+    else if (command == "EXEC") {
+        if (!state.in_transaction) return "-ERR EXEC without MULTI\r\n";
+
+        std::string final_resp = "*" + std::to_string(state.transaction_queue.size()) + "\r\n";
+        for (const auto& queued_parts : state.transaction_queue) {
+            final_resp += dispatch_command(client_fd, queued_parts, true);
         }
+
+        state.in_transaction = false;
+        state.transaction_queue.clear();
+        state.watched_keys.clear();
+        return final_resp;
+    }
+
+    else if (command == "DISCARD") {
+        if (!state.in_transaction) return "-ERR DISCARD without MULTI\r\n";
+        state.transaction_queue.clear();
+        state.in_transaction = false;
+        state.watched_keys.clear();
+        return "+OK\r\n";
+    }
+
+    else if (command == "WATCH") {
+        if (parts.size() < 5) return "-ERR wrong number of arguments\r\n";
+        for (size_t i = 4; i < parts.size(); i += 2) {
+            const std::string key = parts[i];
+            if (std::find(state.watched_keys.begin(), 
+                          state.watched_keys.end(), 
+                          key) == state.watched_keys.end()) {
+                state.watched_keys.push_back(key);
+            }
+        }
+        return "+OK\r\n";
     }
 
     else if (command == "ECHO") {
@@ -75,8 +112,7 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
 
     else if (command == "SET") {
         if (parts.size() < 7) return "-ERR wrong number of arguments\r\n";
-        std::string key = parts[4];
-        std::string value = parts[6];
+        std::string key = parts[4], value = parts[6];
         ValueEntry entry;
         entry.type = ValueType::STRING;
         entry.value = value;
@@ -85,9 +121,9 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
             std::string option = parts[8];
             for (auto &c : option) c = toupper(c);
             if (option == "PX") {
-                long long ms = std::stoll(parts[10]);
                 entry.has_expiry = true;
-                entry.expiry_time = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
+                entry.expiry_time = std::chrono::steady_clock::now() +
+                                    std::chrono::milliseconds(std::stoll(parts[10]));
             }
         }
         g_kv_store[key] = entry;
@@ -98,19 +134,14 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
     else if (command == "GET") {
         if (parts.size() < 5) return "-ERR wrong number of arguments\r\n";
         std::string key = parts[4];
-
         if (g_kv_store.count(key)) {
             ValueEntry &entry = g_kv_store[key];
             if (entry.has_expiry && std::chrono::steady_clock::now() >= entry.expiry_time) {
                 g_kv_store.erase(key);
                 return "$-1\r\n";
-            } else if (entry.type != ValueType::STRING) {
-                return "-WRONGTYPE Operation\r\n";
-            } else {
-                return "$" + std::to_string(entry.value.length()) + "\r\n" + entry.value + "\r\n";
             }
-        }
-        
+            return "$" + std::to_string(entry.value.length()) + "\r\n" + entry.value + "\r\n";
+        }     
         return "$-1\r\n";
     }
 
@@ -305,36 +336,26 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
     }
 
     else if (command == "INFO") {
-        std::string section = "";
-        if (parts.size() >= 5) {
-            section = parts[4];
-            for (auto &c : section) c = toupper(c);
-        }
-
         std::string role = g_config.is_replica ? "slave" : "master";
         std::string info_content = "role:" + role + "\n";
 
         info_content += "master_replid:" + g_config.master_replid + "\n";
         info_content += "master_repl_offset:" + std::to_string(g_config.master_repl_offset) + "\n";
 
-        std::string resp = "$" + std::to_string(info_content.length()) + "\r\n" + info_content + "\r\n";
-        return resp;
+        return "$" + std::to_string(info_content.length()) + "\r\n" + info_content + "\r\n";
     }
 
     else if (command == "REPLCONF") {
         if (parts.size() >= 7) {
             std::string sub_command = parts[4];
             for (auto &c : sub_command) c = toupper(c);
-            
             if (sub_command == "GETACK") {
                 std::string offset_str = std::to_string(g_config.processed_bytes);
                 return "*3\r\n$8\r\nREPLCONF\r\n$3\r\nACK\r\n$" + 
                        std::to_string(offset_str.length()) + "\r\n" + offset_str + "\r\n";
             }
-
-            else if (sub_command == "ACK") {
-                long long offset = std::stoll(parts[6]);
-                g_replica_offsets[client_fd] = offset;
+            if (sub_command == "ACK") {
+                g_replica_offsets[client_fd] = std::stoll(parts[6]);
                 return "";
             }
         }
@@ -395,102 +416,55 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
         return "";
     }
 
+    else if (command == "PUBLISH") {
+        if (parts.size() < 7) return "-ERR wrong number of arguments\r\n";
+        std::string channel = parts[4], message = parts[6];
+        std::string resp = "*3\r\n$7\r\nmessage\r\n$" + std::to_string(channel.length()) + "\r\n" + channel + "\r\n$" + std::to_string(message.length()) + "\r\n" + message + "\r\n";
+        int count = 0;
+        for (auto const& [fd, state] : g_client_states) {
+            if (std::find(state.subscribed_channels.begin(), state.subscribed_channels.end(), channel) != state.subscribed_channels.end()) {
+                send(fd, resp.c_str(), resp.length(), 0);
+                count++;
+            }
+        }
+        return ":" + std::to_string(count) + "\r\n";
+    }
+
     else if (command == "SUBSCRIBE") {
         if (parts.size() < 5) return "-ERR wrong number of arguments\r\n";
         std::string full_resp = "";
-        ClientState &state = g_client_states[client_fd];
-        
         for (size_t i = 4; i < parts.size(); i += 2) {
             std::string channel = parts[i];
-
-            if (std::find(state.subscribed_channels.begin(), 
-                          state.subscribed_channels.end(), 
-                          channel) == state.subscribed_channels.end()) {
+            if (std::find(state.subscribed_channels.begin(), state.subscribed_channels.end(), channel) == state.subscribed_channels.end()) {
                 state.subscribed_channels.push_back(channel);
             }
-            std::string count_str = std::to_string(state.subscribed_channels.size());
-            full_resp += "*3\r\n";
-            full_resp += "$9\r\nsubscribe\r\n";
-            full_resp += "$" + std::to_string(channel.length()) + "\r\n" + channel + "\r\n";
-            full_resp += ":" + count_str + "\r\n";
+            full_resp += "*3\r\n$9\r\nsubscribe\r\n$" + std::to_string(channel.length()) + "\r\n" + channel + "\r\n";
+            full_resp += ":" + std::to_string(state.subscribed_channels.size()) + "\r\n";
         }
         return full_resp;
     }
 
-    else if (command == "PUBLISH") {
-        if (parts.size() < 7) return "-ERR wrong number of arguments\r\n";
-        std::string channel = parts[4];
-        std::string message = parts[6];
-
-        std::string resp = "*3\r\n";
-        resp += "$7\r\nmessage\r\n";
-        resp += "$" + std::to_string(channel.length()) + "\r\n" + channel + "\r\n";
-        resp += "$" + std::to_string(message.length()) + "\r\n" + message + "\r\n";
-        int subscriber_count = 0;
-
-        for (auto const& [fd, state] : g_client_states) {
-            auto it = std::find(state.subscribed_channels.begin(),
-                                state.subscribed_channels.end(),
-                                channel);
-
-            if (it != state.subscribed_channels.end()) {
-                send(fd, resp.c_str(), resp.length(), 0);
-                subscriber_count++;
-            }
-        }
-        return ":" + std::to_string(subscriber_count) + "\r\n";
-    }
-
     else if (command == "UNSUBSCRIBE") {
-        ClientState &state = g_client_states[client_fd];
         std::string full_resp = "";
 
-        if (parts.size() < 5) {
-             std::vector<std::string> channels_to_remove = state.subscribed_channels;
-             for (const auto& channel : channels_to_remove) {
-                 state.subscribed_channels.erase(
-                     std::remove(state.subscribed_channels.begin(), state.subscribed_channels.end(), channel),
-                     state.subscribed_channels.end()
-                 );
-                 full_resp += "*3\r\n$11\r\nunsubscribe\r\n$" + std::to_string(channel.length()) + 
-                              "\r\n" + channel + "\r\n:" + std::to_string(state.subscribed_channels.size()) + "\r\n";
-             }
-             if (full_resp.empty()) return "*3\r\n$11\r\nunsubscribe\r\n$-1\r\n:0\r\n";
-             return full_resp;
+        std::vector<std::string> targets;
+        if (parts.size() < 5) targets = state.subscribed_channels;
+        else {
+            for(size_t i = 4; i < parts.size(); i += 2) targets.push_back(parts[i]);
         }
 
-        for (size_t i = 4; i < parts.size(); i += 2) {
-            std::string channel = parts[i];
+        if (targets.empty()) return "*3\r\n$11\r\nunsubscribe\r\n$-1\r\n:0\r\n";
 
+        for (const auto& channel : targets) {
             auto it = std::find(state.subscribed_channels.begin(), state.subscribed_channels.end(), channel);
             if (it != state.subscribed_channels.end()) {
                 state.subscribed_channels.erase(it);
             }
-
-            std::string count_str = std::to_string(state.subscribed_channels.size());
-            full_resp += "*3\r\n";
-            full_resp += "$11\r\nunsubscribe\r\n";
-            full_resp += "$" + std::to_string(channel.length()) + "\r\n" + channel + "\r\n";
-            full_resp += ":" + count_str + "\r\n";
+            full_resp += "*3\r\n$11\r\nunsubscribe\r\n$" + std::to_string(channel.length()) + 
+                         "\r\n" + channel + "\r\n:" + std::to_string(state.subscribed_channels.size()) + "\r\n";
         }
         
         return full_resp;
-    }
-
-    else if (command == "WATCH") {
-        if (parts.size() < 5) return "-ERR wrong number of arguments\r\n";
-        ClientState &state = g_client_states[client_fd];
-        
-        for (size_t i = 4; i < parts.size(); i += 2) {
-            std::string key = parts[i];
-            if (std::find(state.watched_keys.begin(), 
-                          state.watched_keys.end(), 
-                          key) == state.watched_keys.end()) {
-                state.watched_keys.push_back(key);
-            }
-        }
-
-        return "+OK\r\n";
     }
 
     return "-ERR unknown command\r\n";
@@ -507,18 +481,13 @@ void handle_client(int client_fd) {
 
     size_t i = 0;
     while (i < all_parts.size()) {
-        if (all_parts[i].size() < 2 || all_parts[i][0] != '*') {
-            i++; continue; 
-        }
+        if (all_parts[i][0] != '*') { i++; continue; }
 
         int num_elements = std::stoi(all_parts[i].substr(1));
         std::vector<std::string> parts;
-        
-        // extract header and n elements
-        size_t command_start_index = i;
         size_t elements_to_capture = 1 + (num_elements * 2);
-
         long long current_command_size = 0;
+
         for (size_t j = 0; j < elements_to_capture && i < all_parts.size(); ++j) {
             current_command_size += all_parts[i].length() + 2;
             parts.push_back(all_parts[i++]);
@@ -526,58 +495,13 @@ void handle_client(int client_fd) {
 
         if (parts.size() < 3) continue;
 
-        std::string command = parts[2];
-        for (auto &c : command) c = toupper(c);
-
         if (g_client_states.find(client_fd) == g_client_states.end()) {
-            g_client_states[client_fd] = {false, {}};
-        }
-        ClientState &state = g_client_states[client_fd];
-
-        // transactions command handling
-        if (command == "MULTI") {
-            state.in_transaction = true;
-            state.transaction_queue.clear();
-            if (client_fd != g_master_fd) send(client_fd, "+OK\r\n", 5, 0);
-            continue;
+            g_client_states[client_fd] = {false, {}, {}, {}};
         }
 
-        else if (command == "EXEC") {
-            if (!state.in_transaction) {
-                if (client_fd != g_master_fd) send(client_fd, "-ERR EXEC without MULTI\r\n", 25, 0);
-                continue;
-            }
-            std::string final_resp = "*" + std::to_string(state.transaction_queue.size()) + "\r\n";
-            for (const auto& queued_parts : state.transaction_queue) {
-                final_resp += dispatch_command(client_fd, queued_parts, true);
-            }
-            if (client_fd != g_master_fd) send(client_fd, final_resp.c_str(), final_resp.length(), 0);
-            state.in_transaction = false;
-            state.transaction_queue.clear();
-            continue;
-        }
-
-        else if (command == "DISCARD") {
-            if (!state.in_transaction) {
-                if (client_fd != g_master_fd) send(client_fd, "-ERR DISCARD without MULTI\r\n", 28, 0);
-                continue;
-            }
-            state.transaction_queue.clear();
-            state.in_transaction = false;
-            if (client_fd != g_master_fd) send(client_fd, "+OK\r\n", 5, 0);
-            continue;
-        }
-
-        else if (state.in_transaction) {
-            state.transaction_queue.push_back(parts);
-            if (client_fd != g_master_fd) send(client_fd, "+QUEUED\r\n", 9, 0);
-            continue;
-        }
-
-        // normal command handling
         std::string result = dispatch_command(client_fd, parts);
         if (!result.empty()) {
-            bool is_getack_reply = (command == "REPLCONF" &&
+            bool is_getack_reply = (parts[2] == "REPLCONF" &&
                 parts.size() >= 7 && (parts[4] == "GETACK"));
 
             if (client_fd != g_master_fd || is_getack_reply) {
