@@ -5,6 +5,7 @@
 #include <netinet/in.h>
 #include <poll.h>
 #include <algorithm>
+#include <cerrno>
 #include "common.h"
 
 void handle_client(int client_fd);
@@ -107,8 +108,12 @@ int main(int argc, char** argv) {
             // check if client disconnected
             char dummy;
             int res = recv(fd, &dummy, 1, MSG_PEEK | MSG_DONTWAIT);
-            if (res == 0 && !blocked) {
+            if ((res <= 0 && errno != EAGAIN && errno != EWOULDBLOCK) && !blocked) {
                 int fd_to_close = fd;
+
+                if (fd_to_close == g_master_fd) {
+                    g_master_fd = -1;
+                }
 
                 g_replicas.erase(
                     std::remove(g_replicas.begin(), g_replicas.end(), fd_to_close),

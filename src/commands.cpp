@@ -331,8 +331,7 @@ void handle_client(int client_fd) {
     char buffer[4096];
     int bytes_read = recv(client_fd, buffer, sizeof(buffer) - 1, 0);
     if (bytes_read <= 0) {
-        g_client_states.erase(client_fd);
-        close(client_fd); return;
+        return;
     }
     buffer[bytes_read] = '\0';
 
