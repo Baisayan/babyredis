@@ -59,7 +59,7 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
 
     if (command == "PING") {
         ClientState &state = g_client_states[client_fd];
-        
+
         if (!state.subscribed_channels.empty()) {
             return "*2\r\n$4\r\npong\r\n$0\r\n\r\n";
         } else {
@@ -408,15 +408,27 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
                           channel) == state.subscribed_channels.end()) {
                 state.subscribed_channels.push_back(channel);
             }
-
             std::string count_str = std::to_string(state.subscribed_channels.size());
             full_resp += "*3\r\n";
             full_resp += "$9\r\nsubscribe\r\n";
             full_resp += "$" + std::to_string(channel.length()) + "\r\n" + channel + "\r\n";
             full_resp += ":" + count_str + "\r\n";
         }
-        
         return full_resp;
+    }
+
+    else if (command == "PUBLISH") {
+        if (parts.size() < 7) return "-ERR wrong number of arguments\r\n";
+        std::string channel = parts[4];
+        int subscriber_count = 0;
+
+        for (auto const& [fd, state] : g_client_states) {
+            auto it = std::find(state.subscribed_channels.begin(), state.subscribed_channels.end(), channel);  
+            if (it != state.subscribed_channels.end()) {
+                subscriber_count++;
+            }
+        }
+        return ":" + std::to_string(subscriber_count) + "\r\n";
     }
 
     return "-ERR unknown command\r\n";
