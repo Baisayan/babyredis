@@ -373,6 +373,25 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
         return "";
     }
 
+    else if (command == "SUBSCRIBE") {
+        if (parts.size() < 5) return "-ERR wrong number of arguments\r\n";
+        std::string channel = parts[4];
+        ClientState &state = g_client_states[client_fd];
+        
+        if (std::find(state.subscribed_channels.begin(), state.subscribed_channels.end(), channel) 
+            == state.subscribed_channels.end()) {
+            state.subscribed_channels.push_back(channel);
+        }
+
+        std::string count_str = std::to_string(state.subscribed_channels.size());
+        std::string resp = "*3\r\n";
+        resp += "$9\r\nsubscribe\r\n";
+        resp += "$" + std::to_string(channel.length()) + "\r\n" + channel + "\r\n";
+        resp += ":" + count_str + "\r\n";
+        
+        return resp;
+    }
+
     return "-ERR unknown command\r\n";
 }
 
