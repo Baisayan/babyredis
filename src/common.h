@@ -29,7 +29,7 @@ struct WaitingClient {
     std::chrono::steady_clock::time_point deadline;
 };
 
-extern std::vector<WaitingClient> g_waiting_wait_clients;
+extern std::vector<WaitingClient> g_waiting_clients;
 extern std::unordered_map<int, long long> g_replica_offsets;
 
 void load_rdb();

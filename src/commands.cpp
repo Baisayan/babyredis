@@ -368,7 +368,7 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
         wc.target_count = num_replicas_requested;
         wc.target_offset = g_config.master_repl_offset;
         wc.deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
-        g_waiting_wait_clients.push_back(wc);
+        g_waiting_clients.push_back(wc);
 
         return "";
     }
