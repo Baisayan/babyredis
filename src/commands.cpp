@@ -58,7 +58,13 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
     }
 
     if (command == "PING") {
-        return "+PONG\r\n";
+        ClientState &state = g_client_states[client_fd];
+        
+        if (!state.subscribed_channels.empty()) {
+            return "*2\r\n$4\r\npong\r\n$0\r\n\r\n";
+        } else {
+            return "+PONG\r\n";
+        }
     }
 
     else if (command == "ECHO") {
