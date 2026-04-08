@@ -29,6 +29,11 @@ int initiate_replica_handshake() {
     std::memcpy(&master_addr.sin_addr.s_addr, server->h_addr, server->h_length);
     master_addr.sin_port = htons(g_config.master_port);
 
+    struct timeval tv;
+    tv.tv_sec = 0;
+    tv.tv_usec = 500000; 
+    setsockopt(master_fd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv);
+
     // connect to the Master
     if (connect(master_fd, (struct sockaddr*)&master_addr, sizeof(master_addr)) < 0) {
         close(master_fd); return -1;
@@ -58,6 +63,10 @@ int initiate_replica_handshake() {
 
     char res_buf[1024];
     recv(master_fd, res_buf, sizeof(res_buf), 0);
+
+    tv.tv_sec = 0;
+    tv.tv_usec = 0;
+    setsockopt(master_fd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv);
 
     g_master_fd = master_fd;
     return master_fd; 

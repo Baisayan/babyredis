@@ -341,12 +341,16 @@ void handle_client(int client_fd) {
 
     size_t i = 0;
     while (i < all_parts.size()) {
-        if (all_parts[i][0] != '*') {
+        if (all_parts[i].empty() || all_parts[i][0] != '*') {
             i++; continue; 
         }
 
-        // how many elements in this specific command array
-        int num_elements = std::stoi(all_parts[i].substr(1));
+        int num_elements = 0;
+        try {
+            num_elements = std::stoi(all_parts[i].substr(1));
+        } catch (const std::exception& e) {
+            i++; continue; 
+        }
         std::vector<std::string> parts;
         
         // extract header and n elements

@@ -32,11 +32,18 @@ int main(int argc, char** argv) {
             g_config.port = std::stoi(argv[++i]);
         } else if (arg == "--replicaof" && i + 1 < argc) {
             g_config.is_replica = true;
-            std::string master_info = argv[++i];
-            size_t space = master_info.find(' ');
-            if (space != std::string::npos) {
-                g_config.master_host = master_info.substr(0, space);
-                g_config.master_port = std::stoi(master_info.substr(space + 1));
+            if (i + 2 < argc && std::string(argv[i+1]).find(' ') == std::string::npos) {
+                g_config.master_host = argv[++i];
+                g_config.master_port = std::stoi(argv[++i]);
+            } 
+            // Handle if passed as a single string with a space
+            else if (i + 1 < argc) {
+                std::string master_info = argv[++i];
+                size_t space = master_info.find(' ');
+                if (space != std::string::npos) {
+                    g_config.master_host = master_info.substr(0, space);
+                    g_config.master_port = std::stoi(master_info.substr(space + 1));
+                }
             }
         }
     }
