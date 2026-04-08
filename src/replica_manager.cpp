@@ -56,9 +56,30 @@ int initiate_replica_handshake() {
     std::string psync_cmd = "*3\r\n$5\r\nPSYNC\r\n$1\r\n?\r\n$2\r\n-1\r\n";
     send(master_fd, psync_cmd.c_str(), psync_cmd.length(), 0);
 
-    char res_buf[1024];
-    recv(master_fd, res_buf, sizeof(res_buf), 0);
+    std::string fullresync;
+    char c;
+    while (recv(master_fd, &c, 1, 0) > 0) {
+        fullresync += c;
+        if (fullresync.size() >= 2 && fullresync.substr(fullresync.size() - 2) == "\r\n") break;
+    }
+
+    std::string rdb_len_str;
+    while (recv(master_fd, &c, 1, 0) > 0) {
+        rdb_len_str += c;
+        if (rdb_len_str.size() >= 2 && rdb_len_str.substr(rdb_len_str.size() - 2) == "\r\n") break;
+    }
+
+    if (!rdb_len_str.empty() && rdb_len_str[0] == '$') {
+        int rdb_len = std::stoi(rdb_len_str.substr(1, rdb_len_str.size() - 3));
+        std::vector<char> rdb_data(rdb_len);
+        int total_read = 0;
+        while (total_read < rdb_len) {
+            int bytes = recv(master_fd, rdb_data.data() + total_read, rdb_len - total_read, 0);
+            if (bytes <= 0) break;
+            total_read += bytes;
+        }
+    }
 
     g_master_fd = master_fd;
-    return master_fd; 
+    return master_fd;
 }

@@ -346,7 +346,7 @@ void handle_client(int client_fd) {
 
     size_t i = 0;
     while (i < all_parts.size()) {
-        if (all_parts[i].size() < 2 || all_parts[i][0] != '*' || !isdigit(all_parts[i][1])) {
+        if (all_parts[i].size() < 2 || all_parts[i][0] != '*') {
             i++; continue; 
         }
 
