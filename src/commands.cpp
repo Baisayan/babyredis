@@ -39,7 +39,23 @@ void handle_blocked_clients(int client_fd, const std::string& key, const std::st
 std::string dispatch_command(int client_fd, const std::vector<std::string>& parts, bool is_from_exec = false) {
     if (parts.size() < 3) return "";
     std::string command = parts[2];
+    std::string original_command = command;
     for (auto &c : command) c = toupper(c);
+
+    ClientState &state = g_client_states[client_fd];
+    bool is_subscribed = !state.subscribed_channels.empty();
+
+    if (is_subscribed) {
+        if (command != "SUBSCRIBE" && 
+            command != "UNSUBSCRIBE" && 
+            command != "PSUBSCRIBE" && 
+            command != "PUNSUBSCRIBE" && 
+            command != "PING" && 
+            command != "QUIT") {
+            
+            return "-ERR Can't execute '" + original_command + "': only (P|S)SUBSCRIBE / (P|S)UNSUBSCRIBE / PING / QUIT / RESET are allowed in this context\r\n";
+        }
+    }
 
     if (command == "PING") {
         return "+PONG\r\n";
@@ -375,21 +391,26 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
 
     else if (command == "SUBSCRIBE") {
         if (parts.size() < 5) return "-ERR wrong number of arguments\r\n";
-        std::string channel = parts[4];
+        std::string full_resp = "";
         ClientState &state = g_client_states[client_fd];
         
-        if (std::find(state.subscribed_channels.begin(), state.subscribed_channels.end(), channel) 
-            == state.subscribed_channels.end()) {
-            state.subscribed_channels.push_back(channel);
-        }
+        for (size_t i = 4; i < parts.size(); i += 2) {
+            std::string channel = parts[i];
 
-        std::string count_str = std::to_string(state.subscribed_channels.size());
-        std::string resp = "*3\r\n";
-        resp += "$9\r\nsubscribe\r\n";
-        resp += "$" + std::to_string(channel.length()) + "\r\n" + channel + "\r\n";
-        resp += ":" + count_str + "\r\n";
+            if (std::find(state.subscribed_channels.begin(), 
+                          state.subscribed_channels.end(), 
+                          channel) == state.subscribed_channels.end()) {
+                state.subscribed_channels.push_back(channel);
+            }
+
+            std::string count_str = std::to_string(state.subscribed_channels.size());
+            full_resp += "*3\r\n";
+            full_resp += "$9\r\nsubscribe\r\n";
+            full_resp += "$" + std::to_string(channel.length()) + "\r\n" + channel + "\r\n";
+            full_resp += ":" + count_str + "\r\n";
+        }
         
-        return resp;
+        return full_resp;
     }
 
     return "-ERR unknown command\r\n";

@@ -28,12 +28,6 @@ bool is_blocked_client(int fd) {
         [&](const WaitingClient& wc) { return wc.fd == fd; }
     );
 
-    if (g_client_states.count(fd)) {
-        if (!g_client_states[fd].subscribed_channels.empty()) {
-            return false; 
-        }
-    }
-
     return blocked_blpop || blocked_wait;
 }
 
