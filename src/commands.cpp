@@ -346,7 +346,7 @@ void handle_client(int client_fd) {
 
     size_t i = 0;
     while (i < all_parts.size()) {
-        if (all_parts[i].empty() || all_parts[i][0] != '*') {
+        if (all_parts[i].size() < 2 || all_parts[i][0] != '*' || !isdigit(all_parts[i][1])) {
             i++; continue; 
         }
 
@@ -412,7 +412,9 @@ void handle_client(int client_fd) {
         // normal command handling
         std::string result = dispatch_command(client_fd, parts);
         if (!result.empty()) {
-            bool is_getack_reply = (command == "REPLCONF" && parts.size() >= 7 && (parts[4] == "getack" || parts[4] == "GETACK"));
+            bool is_getack_reply = (command == "REPLCONF" &&
+                parts.size() >= 7 &&
+                (parts[4] == "GETACK"));
 
             if (client_fd != g_master_fd || is_getack_reply) {
                 send(client_fd, result.c_str(), result.length(), 0);
