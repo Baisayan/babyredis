@@ -303,7 +303,9 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
             for (auto &c : sub_command) c = toupper(c);
             
             if (sub_command == "GETACK") {
-                return "*3\r\n$8\r\nREPLCONF\r\n$3\r\nACK\r\n$1\r\n0\r\n";
+                std::string offset_str = std::to_string(g_config.processed_bytes);
+                return "*3\r\n$8\r\nREPLCONF\r\n$3\r\nACK\r\n$" + 
+                       std::to_string(offset_str.length()) + "\r\n" + offset_str + "\r\n";
             }
         }
         return "+OK\r\n";
@@ -354,8 +356,12 @@ void handle_client(int client_fd) {
         std::vector<std::string> parts;
         
         // extract header and n elements
-        size_t elements_to_capture = 1 + (num_elements * 2); 
+        size_t command_start_index = i;
+        size_t elements_to_capture = 1 + (num_elements * 2);
+
+        long long current_command_size = 0;
         for (size_t j = 0; j < elements_to_capture && i < all_parts.size(); ++j) {
+            current_command_size += all_parts[i].length() + 2;
             parts.push_back(all_parts[i++]);
         }
 
@@ -413,12 +419,15 @@ void handle_client(int client_fd) {
         std::string result = dispatch_command(client_fd, parts);
         if (!result.empty()) {
             bool is_getack_reply = (command == "REPLCONF" &&
-                parts.size() >= 7 &&
-                (parts[4] == "GETACK"));
+                parts.size() >= 7 && (parts[4] == "GETACK"));
 
             if (client_fd != g_master_fd || is_getack_reply) {
                 send(client_fd, result.c_str(), result.length(), 0);
             }
+        }
+
+        if (client_fd == g_master_fd) {
+            g_config.processed_bytes += current_command_size;
         }
     }
 }

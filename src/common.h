@@ -18,6 +18,7 @@ struct RedisConfig {
 
     std::string master_replid = "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb";
     int master_repl_offset = 0;
+    long long processed_bytes = 0;
 };
 extern RedisConfig g_config;
 
