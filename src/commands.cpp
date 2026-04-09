@@ -26,6 +26,17 @@ void propagate_to_replicas(const std::vector<std::string>& parts) {
     }
 }
 
+void touch_key(const std::string& key) {
+    if (g_key_watchers.count(key)) {
+        for (int client_fd : g_key_watchers[key]) {
+            if (g_client_states.count(client_fd)) {
+                g_client_states[client_fd].is_dirty = true;
+            }
+        }
+        g_key_watchers.erase(key);
+    }
+}
+
 // notify a blocked client if key becomes available
 void handle_blocked_clients(int client_fd, const std::string& key, const std::string& value) {
     std::string resp = "*2\r\n$" + std::to_string(key.length()) + "\r\n" + key + "\r\n";
@@ -72,6 +83,14 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
     else if (command == "EXEC") {
         if (!state.in_transaction) return "-ERR EXEC without MULTI\r\n";
 
+        if (state.is_dirty) {
+            state.in_transaction = false;
+            state.transaction_queue.clear();
+            state.watched_keys.clear();
+            state.is_dirty = false;
+            return "*-1\r\n"; // RESP Null Array
+        }
+
         std::string final_resp = "*" + std::to_string(state.transaction_queue.size()) + "\r\n";
         for (const auto& queued_parts : state.transaction_queue) {
             final_resp += dispatch_command(client_fd, queued_parts, true);
@@ -80,6 +99,7 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
         state.in_transaction = false;
         state.transaction_queue.clear();
         state.watched_keys.clear();
+        state.is_dirty = false;
         return final_resp;
     }
 
@@ -88,17 +108,20 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
         state.transaction_queue.clear();
         state.in_transaction = false;
         state.watched_keys.clear();
+        state.is_dirty = false;
         return "+OK\r\n";
     }
 
     else if (command == "WATCH") {
+        if (state.in_transaction) return "-ERR WATCH inside MULTI is not allowed\r\n";
         if (parts.size() < 5) return "-ERR wrong number of arguments\r\n";
         for (size_t i = 4; i < parts.size(); i += 2) {
-            const std::string key = parts[i];
+            std::string key = parts[i];
             if (std::find(state.watched_keys.begin(), 
                           state.watched_keys.end(), 
                           key) == state.watched_keys.end()) {
                 state.watched_keys.push_back(key);
+                g_key_watchers[key].push_back(client_fd);
             }
         }
         return "+OK\r\n";
@@ -127,6 +150,7 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
             }
         }
         g_kv_store[key] = entry;
+        touch_key(key);
         if (!is_from_exec) propagate_to_replicas(parts);
         return "+OK\r\n";
     }

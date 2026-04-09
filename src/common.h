@@ -53,9 +53,11 @@ struct ClientState {
     std::vector<std::vector<std::string>> transaction_queue;
     std::vector<std::string> subscribed_channels;
     std::vector<std::string> watched_keys;
+    bool is_dirty = false;
 };
 
 extern std::unordered_map<int, ClientState> g_client_states;
+extern std::unordered_map<std::string, std::vector<int>> g_key_watchers;
 
 struct BlockedClient {
     int fd;
