@@ -640,6 +640,29 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
         } else { return "$-1\r\n"; }
     }
 
+    else if (command == "ZREM") {
+        if (parts.size() < 7) return "-ERR wrong number of arguments\r\n";
+        std::string key = parts[4];
+        std::string target_member = parts[6];
+        if (g_kv_store.find(key) == g_kv_store.end()) return ":0\r\n";
+
+        ValueEntry &entry = g_kv_store[key];
+        if (entry.type != ValueType::ZSET) return "-WRONGTYPE Operation against Key\r\n";
+
+        auto it = std::find_if(entry.zset_val.begin(), entry.zset_val.end(),
+                               [&target_member](const ZSetMember& m) {
+                                   return m.member == target_member;
+                               });
+
+        if (it != entry.zset_val.end()) {
+            entry.zset_val.erase(it);
+            touch_key(key);
+            if (!is_from_exec) propagate_to_replicas(parts);
+            return ":1\r\n";
+        }
+        return ":0\r\n";
+    }
+
     return "-ERR unknown command\r\n";
 }
 
