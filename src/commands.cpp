@@ -9,6 +9,7 @@ std::unordered_map<std::string, ValueEntry> g_kv_store;
 std::vector<BlockedClient> g_blocked_clients_list;
 std::unordered_map<int, ClientState> g_client_states;
 std::vector<int> g_replicas;
+std::unordered_map<std::string, std::vector<int>> g_key_watchers;
 
 void propagate_to_replicas(const std::vector<std::string>& parts) {
     if (parts.empty()) return;
@@ -175,8 +176,7 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
 
         // Init list if key doesn't exist
         if (g_kv_store.find(key) == g_kv_store.end()) {
-            ValueEntry entry;
-            entry.type = ValueType::LIST;
+            ValueEntry entry; entry.type = ValueType::LIST;
             g_kv_store[key] = entry;
         }
         ValueEntry &entry = g_kv_store[key];
@@ -185,6 +185,9 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
             if (command == "RPUSH") entry.list_val.push_back(parts[i]);
             else entry.list_val.insert(entry.list_val.begin(), parts[i]);
         }
+
+        touch_key(key);
+        if (!is_from_exec) propagate_to_replicas(parts);
 
         int final_length = entry.list_val.size();
         
@@ -240,10 +243,12 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
 
         if (g_kv_store.find(key) == g_kv_store.end()) return "$-1\r\n";
 
-        ValueEntry &entry = g_kv_store[key]; // type check
+        ValueEntry &entry = g_kv_store[key];
         if (entry.type != ValueType::LIST) return "-WRONGTYPE Operation\r\n";
-
         if (entry.list_val.empty()) return "$-1\r\n";
+
+        touch_key(key);
+        if (!is_from_exec) propagate_to_replicas(parts);
 
         if (parts.size() >= 7) {
             long long count = std::stoll(parts[6]);
@@ -308,13 +313,17 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
 
         if (g_kv_store.find(key) == g_kv_store.end()) {
             g_kv_store[key] = {ValueType::STRING, "1"};
+            touch_key(key);
+            if (!is_from_exec) propagate_to_replicas(parts);
             return ":1\r\n";
         } else {
             ValueEntry &entry = g_kv_store[key];
             try {
                 long long val = std::stoll(entry.value);
                 val++;
-                entry.value = std::to_string(val); 
+                entry.value = std::to_string(val);
+                touch_key(key);
+                if (!is_from_exec) propagate_to_replicas(parts);
                 return ":" + entry.value + "\r\n";
             } catch (const std::exception& e) {
                 return "-ERR value is not an integer or out of range\r\n";
