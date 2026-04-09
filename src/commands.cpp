@@ -579,14 +579,16 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
         long long stop = std::stoll(parts[8]);
 
         if (g_kv_store.find(key) == g_kv_store.end()) return "*0\r\n";
-
         ValueEntry &entry = g_kv_store[key];
         if (entry.type != ValueType::ZSET) return "-WRONGTYPE Operation against Key\r\n";
 
-        long long set_size = (long long)entry.zset_val.size();
-
         // handle index boundary logic
-        if (start < 0) start = 0;
+        long long set_size = (long long)entry.zset_val.size();
+        if (start < 0) {
+            start = set_size + start;
+            if (start < 0) start = 0;
+        }
+        if (stop < 0) stop = set_size + stop;
         if (start >= set_size || start > stop) return "*0\r\n";
         if (stop >= set_size) stop = set_size - 1;
 
