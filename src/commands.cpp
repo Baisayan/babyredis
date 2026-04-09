@@ -549,7 +549,29 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
         if (!is_from_exec) propagate_to_replicas(parts);
         return exists ? ":0\r\n" : ":1\r\n";;
     }
-    
+
+    else if (command == "ZRANK") {
+        if (parts.size() < 5) return "-ERR wrong number of arguments\r\n";
+        std::string key = parts[4];
+        std::string target_member = parts[6];
+        if (g_kv_store.find(key) == g_kv_store.end()) return "$-1\r\n";
+
+        ValueEntry &entry = g_kv_store[key];
+        if (entry.type != ValueType::ZSET) return "-WRONGTYPE Operation against Key\r\n";
+
+        int rank = 0;
+        bool found = false;
+        for (const auto& m : entry.zset_val) {
+            if (m.member == target_member) {
+                found = true; break;
+            } rank++;
+        }
+
+        if (found) {
+            return ":" + std::to_string(rank) + "\r\n";
+        } else { return "$-1\r\n"; }
+    }
+
     return "-ERR unknown command\r\n";
 }
 
