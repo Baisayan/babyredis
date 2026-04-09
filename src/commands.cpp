@@ -3,6 +3,8 @@
 #include <unistd.h>
 #include <algorithm>
 #include <vector>
+#include <iomanip>
+#include <sstream>
 #include "common.h"
 
 std::unordered_map<std::string, ValueEntry> g_kv_store;
@@ -631,9 +633,9 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
                                });
 
         if (it != entry.zset_val.end()) {
-            std::string score_str = std::to_string(it->score);
-            score_str.erase(score_str.find_last_not_of('0') + 1, std::string::npos);
-            if (score_str.back() == '.') score_str.pop_back();
+            std::ostringstream oss;
+            oss << std::setprecision(17) << it->score;
+            std::string score_str = oss.str();
             return "$" + std::to_string(score_str.length()) + "\r\n" + score_str + "\r\n";
         } else { return "$-1\r\n"; }
     }
