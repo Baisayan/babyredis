@@ -572,6 +572,38 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
         } else { return "$-1\r\n"; }
     }
 
+    else if (command == "ZRANGE") {
+        if (parts.size() < 7) return "-ERR wrong number of arguments\r\n";
+        std::string key = parts[4];
+        long long start = std::stoll(parts[6]);
+        long long stop = std::stoll(parts[8]);
+
+        if (g_kv_store.find(key) == g_kv_store.end()) return "*0\r\n";
+
+        ValueEntry &entry = g_kv_store[key];
+        if (entry.type != ValueType::ZSET) return "-WRONGTYPE Operation against Key\r\n";
+
+        long long set_size = (long long)entry.zset_val.size();
+
+        // handle index boundary logic
+        if (start < 0) start = 0;
+        if (start >= set_size || start > stop) return "*0\r\n";
+        if (stop >= set_size) stop = set_size - 1;
+
+        std::vector<std::string> result_members;
+        auto it = entry.zset_val.begin();
+        std::advance(it, (size_t)start);
+        for (long long i = start; i <= stop && it != entry.zset_val.end(); ++i) {
+            result_members.push_back(it->member);
+            ++it;
+        }
+        std::string resp = "*" + std::to_string(result_members.size()) + "\r\n";
+        for (const auto& member : result_members) {
+            resp += "$" + std::to_string(member.length()) + "\r\n" + member + "\r\n";
+        }
+        return resp;
+    }
+
     return "-ERR unknown command\r\n";
 }
 
