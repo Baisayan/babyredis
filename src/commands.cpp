@@ -128,6 +128,24 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
         return "+OK\r\n";
     }
 
+    else if (command == "UNWATCH") {
+        for (const std::string& key : state.watched_keys) {
+            if (g_key_watchers.count(key)) {
+                auto& watchers = g_key_watchers[key];
+                watchers.erase(
+                    std::remove(watchers.begin(), watchers.end(), client_fd),
+                    watchers.end()
+                );
+                if (watchers.empty()) {
+                    g_key_watchers.erase(key);
+                }
+            }
+        }
+        state.watched_keys.clear();
+        state.is_dirty = false;
+        return "+OK\r\n";
+    }
+
     else if (command == "ECHO") {
         if (parts.size() < 5) return "-ERR wrong number of arguments\r\n";
         std::string msg = parts[4];
