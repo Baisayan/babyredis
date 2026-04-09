@@ -606,6 +606,16 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
         return resp;
     }
 
+    else if (command == "ZCARD") {
+        if (parts.size() < 5) return "-ERR wrong number of arguments\r\n";
+        std::string key = parts[4];
+
+        if (g_kv_store.find(key) == g_kv_store.end()) return ":0\r\n";
+        ValueEntry &entry = g_kv_store[key];
+        if (entry.type != ValueType::ZSET) return "-WRONGTYPE Operation against Key\r\n";
+        return ":" + std::to_string(entry.zset_val.size()) + "\r\n";
+    }
+
     return "-ERR unknown command\r\n";
 }
 
