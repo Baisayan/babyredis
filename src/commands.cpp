@@ -616,6 +616,28 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
         return ":" + std::to_string(entry.zset_val.size()) + "\r\n";
     }
 
+    else if (command == "ZSCORE") {
+        if (parts.size() < 7) return "-ERR wrong number of arguments\r\n";
+        std::string key = parts[4];
+        std::string target_member = parts[6];
+        if (g_kv_store.find(key) == g_kv_store.end()) return "$-1\r\n";
+
+        ValueEntry &entry = g_kv_store[key];
+        if (entry.type != ValueType::ZSET) return "-WRONGTYPE Operation against Key\r\n";
+
+        auto it = std::find_if(entry.zset_val.begin(), entry.zset_val.end(),
+                               [&target_member](const ZSetMember& m) {
+                                   return m.member == target_member;
+                               });
+
+        if (it != entry.zset_val.end()) {
+            std::string score_str = std::to_string(it->score);
+            score_str.erase(score_str.find_last_not_of('0') + 1, std::string::npos);
+            if (score_str.back() == '.') score_str.pop_back();
+            return "$" + std::to_string(score_str.length()) + "\r\n" + score_str + "\r\n";
+        } else { return "$-1\r\n"; }
+    }
+
     return "-ERR unknown command\r\n";
 }
 
