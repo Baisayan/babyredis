@@ -533,14 +533,23 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
         ValueEntry &entry = g_kv_store[key];     
         if (entry.type != ValueType::ZSET) return "-WRONGTYPE Operation against Key\r\n";
 
-        size_t before_size = entry.zset_val.size();
-        entry.zset_val.insert({member, score});
-        size_t added_count = entry.zset_val.size() - before_size;
+        bool exists = false;
+        auto it = std::find_if(entry.zset_val.begin(), entry.zset_val.end(),
+                               [&member](const ZSetMember& m) { return m.member == member; });
+
+        if (it != entry.zset_val.end()) {
+            exists = true;
+            if (it->score != score) {
+                entry.zset_val.erase(it);
+                entry.zset_val.insert({member, score});
+            }
+        } else { entry.zset_val.insert({member, score}); }
 
         touch_key(key);
         if (!is_from_exec) propagate_to_replicas(parts);
-        return ":" + std::to_string(added_count) + "\r\n";
+        return exists ? ":0\r\n" : ":1\r\n";;
     }
+    
     return "-ERR unknown command\r\n";
 }
 
