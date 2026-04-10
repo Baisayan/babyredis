@@ -584,7 +584,6 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
         ValueEntry &entry = g_kv_store[key];
         if (entry.type != ValueType::ZSET) return "-WRONGTYPE Operation against Key\r\n";
 
-        // handle index boundary logic
         long long set_size = (long long)entry.zset_val.size();
         if (start < 0) {
             start = set_size + start;
@@ -676,9 +675,37 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
                 return "+list\r\n";
             case ValueType::ZSET:
                 return "+zset\r\n";
+            case ValueType::STREAM:
+                return "+stream\r\n";
             default:
                 return "+none\r\n";
         }
+    }
+
+    else if (command == "XADD") {
+        if (parts.size() < 9) return "-ERR wrong number of arguments\r\n";
+        std::string key = parts[4];
+        std::string id = parts[6];
+
+        if (g_kv_store.find(key) == g_kv_store.end()) {
+            ValueEntry entry;
+            entry.type = ValueType::STREAM;
+            g_kv_store[key] = entry;
+        }
+
+        ValueEntry &entry = g_kv_store[key];
+        if (entry.type != ValueType::STREAM) return "-WRONGTYPE Operation against Key\r\n";
+
+        StreamEntry new_entry;
+        new_entry.id = id;
+        for (size_t i = 8; i < parts.size(); i += 4) {
+            new_entry.kv_pairs.push_back({parts[i], parts[i+2]});
+        }
+
+        entry.stream_val.push_back(new_entry);
+        touch_key(key);
+        if (!is_from_exec) propagate_to_replicas(parts);
+        return "$" + std::to_string(id.length()) + "\r\n" + id + "\r\n";
     }
 
     return "-ERR unknown command\r\n";

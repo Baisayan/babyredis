@@ -39,7 +39,7 @@ int initiate_replica_handshake();
 extern std::vector<int> g_replicas;
 extern int g_master_fd;
 
-enum class ValueType {STRING, LIST, ZSET};
+enum class ValueType {STRING, LIST, ZSET, STREAM};
 
 struct ZSetMember {
     std::string member;
@@ -50,11 +50,17 @@ struct ZSetMember {
     }
 };
 
+struct StreamEntry {
+    std::string id;
+    std::vector<std::pair<std::string, std::string>> kv_pairs;
+};
+
 struct ValueEntry {
     ValueType type = ValueType::STRING;
     std::string value;
     std::vector<std::string> list_val;
     std::set<ZSetMember> zset_val;
+    std::vector<StreamEntry> stream_val;
     std::chrono::time_point<std::chrono::steady_clock> expiry_time;
     bool has_expiry = false;
 };
