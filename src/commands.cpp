@@ -663,6 +663,24 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
         return ":0\r\n";
     }
 
+    else if (command == "TYPE") {
+        if (parts.size() < 5) return "-ERR wrong number of arguments\r\n";
+        std::string key = parts[4];
+        if (g_kv_store.find(key) == g_kv_store.end()) return "+none\r\n";
+        ValueEntry &entry = g_kv_store[key];
+
+        switch (entry.type) {
+            case ValueType::STRING:
+                return "+string\r\n";
+            case ValueType::LIST:
+                return "+list\r\n";
+            case ValueType::ZSET:
+                return "+zset\r\n";
+            default:
+                return "+none\r\n";
+        }
+    }
+
     return "-ERR unknown command\r\n";
 }
 
