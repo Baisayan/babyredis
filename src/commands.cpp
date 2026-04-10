@@ -47,6 +47,14 @@ void handle_blocked_clients(int client_fd, const std::string& key, const std::st
     send(client_fd, resp.c_str(), resp.length(), 0);
 }
 
+std::pair<long long, long long> parse_stream_id(const std::string& id) {
+    size_t dash = id.find('-');
+    if (dash == std::string::npos) return {0, 0};
+    long long ms = std::stoll(id.substr(0, dash));
+    long long seq = std::stoll(id.substr(dash + 1));
+    return {ms, seq};
+}
+
 std::string dispatch_command(int client_fd, const std::vector<std::string>& parts, bool is_from_exec = false) {
     if (parts.size() < 3) return "";
 
@@ -687,6 +695,11 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
         std::string key = parts[4];
         std::string id = parts[6];
 
+        auto new_id = parse_stream_id(id);
+        if (new_id.first == 0 && new_id.second == 0) {
+            return "-ERR The ID specified in XADD must be greater than 0-0\r\n";
+        }
+
         if (g_kv_store.find(key) == g_kv_store.end()) {
             ValueEntry entry;
             entry.type = ValueType::STREAM;
@@ -695,6 +708,14 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
 
         ValueEntry &entry = g_kv_store[key];
         if (entry.type != ValueType::STREAM) return "-WRONGTYPE Operation against Key\r\n";
+
+        if (!entry.stream_val.empty()) {
+            auto last_id = parse_stream_id(entry.stream_val.back().id);
+            if (new_id.first < last_id.first || 
+               (new_id.first == last_id.first && new_id.second <= last_id.second)) {
+                return "-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n";
+            }
+        }
 
         StreamEntry new_entry;
         new_entry.id = id;
