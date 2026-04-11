@@ -705,25 +705,47 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
         if (entry.type != ValueType::STREAM) return "-WRONGTYPE Operation against Key\r\n";
 
         std::string final_id = id;
-        size_t dash_pos = id.find('-');
-        
-        if (dash_pos != std::string::npos && id.substr(dash_pos + 1) == "*") {
-            long long ms = std::stoll(id.substr(0, dash_pos));
+
+        if (id == "*") {
+            auto now = std::chrono::system_clock::now();
+            long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                               now.time_since_epoch()).count();
             long long seq = 0;
 
-            if (entry.stream_val.empty()) {
-                seq = (ms == 0) ? 1 : 0;
-            } else {
+            if (!entry.stream_val.empty()) {
                 auto last_id = parse_stream_id(entry.stream_val.back().id);
                 if (ms == last_id.first) {
                     seq = last_id.second + 1;
-                } else if (ms > last_id.first) {
-                    seq = 0;
+                } else if (ms < last_id.first) {
+                    ms = last_id.first;
+                    seq = last_id.second + 1;
                 } else {
-                    return "-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n";
+                    seq = 0;
                 }
-            }
+            } else { seq = (ms == 0) ? 1 : 0; }
             final_id = std::to_string(ms) + "-" + std::to_string(seq);
+        }
+
+        else {
+            size_t dash_pos = id.find('-');
+            if (dash_pos != std::string::npos && id.substr(dash_pos + 1) == "*") {
+                long long ms = std::stoll(id.substr(0, dash_pos));
+                long long seq = 0;
+
+                if (entry.stream_val.empty()) {
+                    seq = (ms == 0) ? 1 : 0;
+                } else {
+                    auto last_id = parse_stream_id(entry.stream_val.back().id);
+                    if (ms == last_id.first) {
+                        seq = last_id.second + 1;
+                    } else if (ms > last_id.first) {
+                        seq = 0;
+                    } else {
+                        return "-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n";
+                    }
+                }
+                final_id = std::to_string(ms) + "-" + std::to_string(seq);
+            }
         }
 
         auto new_id = parse_stream_id(final_id);
