@@ -14,6 +14,7 @@ std::vector<int> g_replicas;
 std::unordered_map<std::string, std::vector<int>> g_key_watchers;
 
 std::pair<long long, long long> parse_range_id(const std::string& id, bool is_start) {
+    if (id == "-") return {0, 0};
     size_t dash = id.find('-');
     if (dash == std::string::npos) {
         long long ms = std::stoll(id);
@@ -799,7 +800,6 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
 
         auto start_limit = parse_range_id(start_id_str, true);
         auto end_limit = parse_range_id(end_id_str, false);
-
         std::string final_resp = "";
         int match_count = 0;
 
