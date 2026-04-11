@@ -740,7 +740,7 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
         }
 
         StreamEntry new_entry;
-        new_entry.id = id;
+        new_entry.id = final_id;
         for (size_t i = 8; i < parts.size(); i += 4) {
             new_entry.kv_pairs.push_back({parts[i], parts[i+2]});
         }
@@ -748,7 +748,7 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
         entry.stream_val.push_back(new_entry);
         touch_key(key);
         if (!is_from_exec) propagate_to_replicas(parts);
-        return "$" + std::to_string(id.length()) + "\r\n" + id + "\r\n";
+        return "$" + std::to_string(final_id.length()) + "\r\n" + final_id + "\r\n";
     }
 
     return "-ERR unknown command\r\n";
