@@ -13,6 +13,17 @@ std::unordered_map<int, ClientState> g_client_states;
 std::vector<int> g_replicas;
 std::unordered_map<std::string, std::vector<int>> g_key_watchers;
 
+std::pair<long long, long long> parse_range_id(const std::string& id, bool is_start) {
+    size_t dash = id.find('-');
+    if (dash == std::string::npos) {
+        long long ms = std::stoll(id);
+        return {ms, is_start ? 0 : -1};
+    }
+    long long ms = std::stoll(id.substr(0, dash));
+    long long seq = std::stoll(id.substr(dash + 1));
+    return {ms, seq};
+}
+
 void propagate_to_replicas(const std::vector<std::string>& parts) {
     if (parts.empty()) return;
     std::vector<std::string> values;
@@ -771,6 +782,55 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
         touch_key(key);
         if (!is_from_exec) propagate_to_replicas(parts);
         return "$" + std::to_string(final_id.length()) + "\r\n" + final_id + "\r\n";
+    }
+
+    else if (command == "XRANGE") {
+        if (parts.size() < 9) return "-ERR wrong number of arguments\r\n";
+        std::string key = parts[4];
+        std::string start_id_str = parts[6];
+        std::string end_id_str = parts[8];
+
+        if (g_kv_store.find(key) == g_kv_store.end()) return "*0\r\n";
+
+        ValueEntry &entry = g_kv_store[key];
+        if (entry.type != ValueType::STREAM) {
+            return "-WRONGTYPE Operation against a key holding the wrong kind of value\r\n";
+        }
+
+        auto start_limit = parse_range_id(start_id_str, true);
+        auto end_limit = parse_range_id(end_id_str, false);
+
+        std::string final_resp = "";
+        int match_count = 0;
+
+        for (const auto& s_entry : entry.stream_val) {
+            auto current_id = parse_stream_id(s_entry.id);
+
+            bool after_start = (current_id.first > start_limit.first) || 
+                               (current_id.first == start_limit.first && current_id.second >= start_limit.second);
+
+            bool before_end = true;
+            if (end_limit.second == -1) {
+                before_end = (current_id.first <= end_limit.first);
+            } else {
+                before_end = (current_id.first < end_limit.first) || 
+                             (current_id.first == end_limit.first && current_id.second <= end_limit.second);
+            }
+
+            if (after_start && before_end) {
+                match_count++;
+                std::string entry_resp = "*2\r\n";
+                entry_resp += "$" + std::to_string(s_entry.id.length()) + "\r\n" + s_entry.id + "\r\n";
+                
+                entry_resp += "*" + std::to_string(s_entry.kv_pairs.size() * 2) + "\r\n";
+                for (const auto& pair : s_entry.kv_pairs) {
+                    entry_resp += "$" + std::to_string(pair.first.length()) + "\r\n" + pair.first + "\r\n";
+                    entry_resp += "$" + std::to_string(pair.second.length()) + "\r\n" + pair.second + "\r\n";
+                }
+                final_resp += entry_resp;
+            }
+        }
+        return "*" + std::to_string(match_count) + "\r\n" + final_resp;
     }
 
     return "-ERR unknown command\r\n";
