@@ -5,6 +5,7 @@
 #include <vector>
 #include <iomanip>
 #include <sstream>
+#include <climits>
 #include "common.h"
 
 std::unordered_map<std::string, ValueEntry> g_kv_store;
@@ -15,6 +16,7 @@ std::unordered_map<std::string, std::vector<int>> g_key_watchers;
 
 std::pair<long long, long long> parse_range_id(const std::string& id, bool is_start) {
     if (id == "-") return {0, 0};
+    if (id == "+") return {LLONG_MAX, LLONG_MAX};
     size_t dash = id.find('-');
     if (dash == std::string::npos) {
         long long ms = std::stoll(id);
