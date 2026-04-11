@@ -835,6 +835,62 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
         return "*" + std::to_string(match_count) + "\r\n" + final_resp;
     }
 
+    else if (command == "XREAD") {
+        if (parts.size() < 9) return "-ERR wrong number of arguments\r\n";
+        size_t streams_idx = 0;
+        for (size_t i = 0; i < parts.size(); ++i) {
+            std::string p = parts[i];
+            for (auto &c : p) c = toupper(c);
+            if (p == "STREAMS") {
+                streams_idx = i;
+                break;
+            }
+        }
+
+        int num_streams = (parts.size() - (streams_idx + 1)) / 2;
+        std::vector<std::string> keys;
+        std::vector<std::string> ids;
+        for (int i = 0; i < num_streams; ++i) {
+            keys.push_back(parts[streams_idx + 2 + (i * 2)]);
+            ids.push_back(parts[streams_idx + 2 + (num_streams * 2) + (i * 2)]);
+        }
+
+        std::string final_resp = "*" + std::to_string(num_streams) + "\r\n";
+        for (int i = 0; i < num_streams; ++i) {
+            std::string key = keys[i];
+            auto limit_id = parse_stream_id(ids[i]);
+            std::string stream_entries_resp = "";
+            int match_count = 0;
+
+            if (g_kv_store.count(key) && g_kv_store[key].type == ValueType::STREAM) {
+                ValueEntry &entry = g_kv_store[key];
+                
+                for (const auto& s_entry : entry.stream_val) {
+                    auto current_id = parse_stream_id(s_entry.id);
+                    
+                    if ((current_id.first > limit_id.first) || 
+                        (current_id.first == limit_id.first && current_id.second > limit_id.second)) {
+                        
+                        match_count++;
+                        std::string entry_data = "*2\r\n";
+                        entry_data += "$" + std::to_string(s_entry.id.length()) + "\r\n" + s_entry.id + "\r\n";
+                        
+                        entry_data += "*" + std::to_string(s_entry.kv_pairs.size() * 2) + "\r\n";
+                        for (const auto& pair : s_entry.kv_pairs) {
+                            entry_data += "$" + std::to_string(pair.first.length()) + "\r\n" + pair.first + "\r\n";
+                            entry_data += "$" + std::to_string(pair.second.length()) + "\r\n" + pair.second + "\r\n";
+                        }
+                        stream_entries_resp += entry_data;
+                    }
+                }
+            }
+            final_resp += "*2\r\n";
+            final_resp += "$" + std::to_string(key.length()) + "\r\n" + key + "\r\n";
+            final_resp += "*" + std::to_string(match_count) + "\r\n" + stream_entries_resp;
+        }
+        return final_resp;
+    }
+
     return "-ERR unknown command\r\n";
 }
 
