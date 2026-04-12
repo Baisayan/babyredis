@@ -13,6 +13,7 @@ std::vector<BlockedClient> g_blocked_clients_list;
 std::unordered_map<int, ClientState> g_client_states;
 std::vector<int> g_replicas;
 std::unordered_map<std::string, std::vector<int>> g_key_watchers;
+std::vector<BlockedStreamClient> g_blocked_streams;
 
 std::pair<long long, long long> parse_range_id(const std::string& id, bool is_start) {
     if (id == "-") return {0, 0};
@@ -717,7 +718,6 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
 
         ValueEntry &entry = g_kv_store[key];
         if (entry.type != ValueType::STREAM) return "-WRONGTYPE Operation against Key\r\n";
-
         std::string final_id = id;
 
         if (id == "*") {
