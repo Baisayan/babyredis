@@ -55,6 +55,16 @@ struct StreamEntry {
     std::vector<std::pair<std::string, std::string>> kv_pairs;
 };
 
+struct BlockedStreamClient {
+    int fd;
+    std::vector<std::string> keys;
+    std::vector<std::string> ids;
+    std::chrono::time_point<std::chrono::steady_clock> deadline;
+    bool has_timeout = false;
+};
+
+extern std::vector<BlockedStreamClient> g_blocked_streams;
+
 struct ValueEntry {
     ValueType type = ValueType::STRING;
     std::string value;

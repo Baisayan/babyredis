@@ -780,8 +780,31 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
         for (size_t i = 8; i < parts.size(); i += 4) {
             new_entry.kv_pairs.push_back({parts[i], parts[i+2]});
         }
-
         entry.stream_val.push_back(new_entry);
+
+        auto it = g_blocked_streams.begin();
+        while (it != g_blocked_streams.end()) {
+            bool unblocked = false;
+            for (size_t k = 0; k < it->keys.size(); ++k) {
+                if (it->keys[k] == key) {
+                    auto blocked_id = parse_stream_id(it->ids[k]);
+                    if (new_id.first > blocked_id.first || 
+                       (new_id.first == blocked_id.first && new_id.second > blocked_id.second)) {
+                        std::vector<std::string> xread_parts = {
+                            "*4", "$5", "XREAD", "$7", "STREAMS", 
+                            "$" + std::to_string(key.length()), key, 
+                            "$" + std::to_string(it->ids[k].length()), it->ids[k]
+                        };  
+                        std::string res = dispatch_command(it->fd, xread_parts, true);
+                        send(it->fd, res.c_str(), res.length(), 0);
+                        unblocked = true;
+                        break;
+                    }
+                }
+            }
+            if (unblocked) it = g_blocked_streams.erase(it);
+            else ++it;
+        }
         touch_key(key);
         if (!is_from_exec) propagate_to_replicas(parts);
         return "$" + std::to_string(final_id.length()) + "\r\n" + final_id + "\r\n";
@@ -836,27 +859,29 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
     }
 
     else if (command == "XREAD") {
-        if (parts.size() < 9) return "-ERR wrong number of arguments\r\n";
+        size_t block_idx = 0;
+        long long block_ms = -1;
         size_t streams_idx = 0;
+
         for (size_t i = 0; i < parts.size(); ++i) {
             std::string p = parts[i];
             for (auto &c : p) c = toupper(c);
-            if (p == "STREAMS") {
-                streams_idx = i;
-                break;
-            }
+            if (p == "STREAMS") streams_idx = i;
+            if (p == "BLOCK") block_idx = i;
         }
 
+        if (block_idx > 0) block_ms = std::stoll(parts[block_idx + 2]);
         int total_args = (parts.size() - (streams_idx + 1)) / 2;
         int num_streams = total_args / 2;
-        std::vector<std::string> keys;
-        std::vector<std::string> ids;
+        std::vector<std::string> keys, ids;
+
         for (int i = 0; i < num_streams; ++i) {
             keys.push_back(parts[streams_idx + 2 + (i * 2)]);
             ids.push_back(parts[streams_idx + 2 + (num_streams * 2) + (i * 2)]);
         }
 
-        std::string final_resp = "*" + std::to_string(num_streams) + "\r\n";
+        std::string resp = "";
+        int total_matches = 0;
         for (int i = 0; i < num_streams; ++i) {
             std::string key = keys[i];
             auto limit_id = parse_stream_id(ids[i]);
@@ -864,18 +889,15 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
             int match_count = 0;
 
             if (g_kv_store.count(key) && g_kv_store[key].type == ValueType::STREAM) {
-                ValueEntry &entry = g_kv_store[key];
-                
-                for (const auto& s_entry : entry.stream_val) {
-                    auto current_id = parse_stream_id(s_entry.id);
-                    
+                for (const auto& s_entry : g_kv_store[key].stream_val) {
+                    auto current_id = parse_stream_id(s_entry.id);     
                     if ((current_id.first > limit_id.first) || 
-                        (current_id.first == limit_id.first && current_id.second > limit_id.second)) {
-                        
+                        (current_id.first == limit_id.first && current_id.second > limit_id.second)) {         
                         match_count++;
+                        total_matches++;
                         std::string entry_data = "*2\r\n";
+
                         entry_data += "$" + std::to_string(s_entry.id.length()) + "\r\n" + s_entry.id + "\r\n";
-                        
                         entry_data += "*" + std::to_string(s_entry.kv_pairs.size() * 2) + "\r\n";
                         for (const auto& pair : s_entry.kv_pairs) {
                             entry_data += "$" + std::to_string(pair.first.length()) + "\r\n" + pair.first + "\r\n";
@@ -885,11 +907,26 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
                     }
                 }
             }
-            final_resp += "*2\r\n";
-            final_resp += "$" + std::to_string(key.length()) + "\r\n" + key + "\r\n";
-            final_resp += "*" + std::to_string(match_count) + "\r\n" + stream_entries_resp;
+            if (match_count > 0) {
+                resp += "*2\r\n$" + std::to_string(key.length()) + "\r\n" + key + "\r\n";
+                resp += "*" + std::to_string(match_count) + "\r\n" + stream_entries_resp;
+            }
         }
-        return final_resp;
+        if (total_matches > 0) {
+            return "*" + std::to_string(num_streams) + "\r\n" + resp;
+        } else if (block_ms >= 0) {
+            BlockedStreamClient bsc;
+            bsc.fd = client_fd;
+            bsc.keys = keys;
+            bsc.ids = ids;
+            if (block_ms > 0) {
+                bsc.has_timeout = true;
+                bsc.deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(block_ms);
+            }
+            g_blocked_streams.push_back(bsc);
+            return "";
+        }
+        return "*-1\r\n";
     }
 
     return "-ERR unknown command\r\n";
