@@ -1,16 +1,18 @@
 cmake_minimum_required(VERSION 3.13)
+project(babyredis)
 
-project(redis-starter-cpp)
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-file(GLOB_RECURSE SOURCE_FILES src/*.cpp)
-
-set(CMAKE_CXX_STANDARD 23) # Enable the C++23 standard
-set(THREADS_PREFER_PTHREAD_FLAG ON)
+set(SOURCE_FILES 
+    src/main.cpp 
+    src/commands.cpp 
+    src/resp_parser.cpp 
+    src/rdb_loader.cpp 
+    src/replica_manager.cpp
+)
+add_executable(babyredis ${SOURCE_FILES})
 
 find_package(Threads REQUIRED)
-find_package(asio CONFIG REQUIRED)
-
-add_executable(redis ${SOURCE_FILES})
-
-target_link_libraries(redis PRIVATE asio asio::asio)
-target_link_libraries(redis PRIVATE Threads::Threads)
+target_link_libraries(babyredis PRIVATE Threads::Threads)
+target_include_directories(babyredis PRIVATE src)

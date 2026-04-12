@@ -5,7 +5,6 @@
 #include <vector>
 #include <iomanip>
 #include <sstream>
-#include <climits>
 #include "common.h"
 
 std::unordered_map<std::string, ValueEntry> g_kv_store;
@@ -46,14 +45,6 @@ void handle_blocked_clients(int client_fd, const std::string& key, const std::st
     std::string resp = "*2\r\n$" + std::to_string(key.length()) + "\r\n" + key + "\r\n";
     resp += "$" + std::to_string(value.length()) + "\r\n" + value + "\r\n";
     send(client_fd, resp.c_str(), resp.length(), 0);
-}
-
-std::pair<long long, long long> parse_stream_id(const std::string& id) {
-    size_t dash = id.find('-');
-    if (dash == std::string::npos) return {0, 0};
-    long long ms = std::stoll(id.substr(0, dash));
-    long long seq = std::stoll(id.substr(dash + 1));
-    return {ms, seq};
 }
 
 std::string dispatch_command(int client_fd, const std::vector<std::string>& parts, bool is_from_exec = false) {
