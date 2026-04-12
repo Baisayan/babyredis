@@ -847,7 +847,8 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
             }
         }
 
-        int num_streams = (parts.size() - (streams_idx + 1)) / 2;
+        int total_args = (parts.size() - (streams_idx + 1)) / 2;
+        int num_streams = total_args / 2;
         std::vector<std::string> keys;
         std::vector<std::string> ids;
         for (int i = 0; i < num_streams; ++i) {
