@@ -136,7 +136,6 @@ int main(int argc, char** argv) {
                     g_replicas.end()
                 );
                 g_replica_offsets.erase(fd_to_close);
-                g_client_states.erase(fd_to_close);
 
                 g_blocked_clients_list.erase(
                     std::remove_if(g_blocked_clients_list.begin(), g_blocked_clients_list.end(),

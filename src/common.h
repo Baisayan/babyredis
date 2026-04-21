@@ -5,7 +5,6 @@
 #include <unordered_map>
 #include <chrono>
 #include <vector>
-#include <deque>
 #include <set>
 
 struct RedisConfig {
@@ -58,16 +57,6 @@ struct ValueEntry {
     std::chrono::time_point<std::chrono::steady_clock> expiry_time;
     bool has_expiry = false;
 };
-
-struct ClientState {
-    bool in_transaction = false;
-    std::vector<std::vector<std::string>> transaction_queue;
-    std::vector<std::string> subscribed_channels;
-    std::vector<std::string> watched_keys;
-    bool is_dirty = false;
-};
-
-extern std::unordered_map<int, ClientState> g_client_states;
 
 struct BlockedClient {
     int fd;

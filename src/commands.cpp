@@ -9,7 +9,6 @@
 
 std::unordered_map<std::string, ValueEntry> g_kv_store;
 std::vector<BlockedClient> g_blocked_clients_list;
-std::unordered_map<int, ClientState> g_client_states;
 std::vector<int> g_replicas;
 
 void propagate_to_replicas(const std::vector<std::string>& parts) {
@@ -41,8 +40,6 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
     std::string original_cmd= parts[2];
     std::string command = original_cmd;
     for (auto &c : command) c = toupper(c);
-
-    ClientState &state = g_client_states[client_fd];
 
     if (command == "PING") {
         return "+PONG\r\n";
@@ -547,10 +544,6 @@ void handle_client(int client_fd) {
         }
 
         if (parts.size() < 3) continue;
-
-        if (g_client_states.find(client_fd) == g_client_states.end()) {
-            g_client_states[client_fd] = {false, {}, {}, {}};
-        }
 
         std::string result = dispatch_command(client_fd, parts);
         if (!result.empty()) {
