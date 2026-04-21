@@ -11,7 +11,6 @@ std::unordered_map<std::string, ValueEntry> g_kv_store;
 std::vector<BlockedClient> g_blocked_clients_list;
 std::unordered_map<int, ClientState> g_client_states;
 std::vector<int> g_replicas;
-std::unordered_map<std::string, std::vector<int>> g_key_watchers;
 
 void propagate_to_replicas(const std::vector<std::string>& parts) {
     if (parts.empty()) return;
@@ -29,17 +28,6 @@ void propagate_to_replicas(const std::vector<std::string>& parts) {
     }
 }
 
-void touch_key(const std::string& key) {
-    if (g_key_watchers.count(key)) {
-        for (int client_fd : g_key_watchers[key]) {
-            if (g_client_states.count(client_fd)) {
-                g_client_states[client_fd].is_dirty = true;
-            }
-        }
-        g_key_watchers.erase(key);
-    }
-}
-
 // notify a blocked client if key becomes available
 void handle_blocked_clients(int client_fd, const std::string& key, const std::string& value) {
     std::string resp = "*2\r\n$" + std::to_string(key.length()) + "\r\n" + key + "\r\n";
@@ -47,7 +35,7 @@ void handle_blocked_clients(int client_fd, const std::string& key, const std::st
     send(client_fd, resp.c_str(), resp.length(), 0);
 }
 
-std::string dispatch_command(int client_fd, const std::vector<std::string>& parts, bool is_from_exec = false) {
+std::string dispatch_command(int client_fd, const std::vector<std::string>& parts) {
     if (parts.size() < 3) return "";
 
     std::string original_cmd= parts[2];
@@ -55,96 +43,9 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
     for (auto &c : command) c = toupper(c);
 
     ClientState &state = g_client_states[client_fd];
-    bool is_subscribed = !state.subscribed_channels.empty();
-
-    if (is_subscribed) {
-        if (command != "SUBSCRIBE" && command != "UNSUBSCRIBE" && command != "PSUBSCRIBE" && 
-            command != "PUNSUBSCRIBE" && command != "PING" && command != "QUIT") {
-            return "-ERR Can't execute '" + original_cmd + "': only (P|S)SUBSCRIBE / (P|S)UNSUBSCRIBE / PING / QUIT are allowed in this context\r\n";
-        }
-    }
-
-    if (state.in_transaction && !is_from_exec && command != "EXEC" && command != "DISCARD" && command != "MULTI" && command != "QUIT") {
-        if (command == "WATCH") return "-ERR WATCH inside MULTI is not allowed\r\n";
-        state.transaction_queue.push_back(parts);
-        return "+QUEUED\r\n";
-    }
 
     if (command == "PING") {
-        if (is_subscribed) return "*2\r\n$4\r\npong\r\n$0\r\n\r\n";
         return "+PONG\r\n";
-    }
-
-    else if (command == "MULTI") {
-        if (state.in_transaction) return "-ERR MULTI calls can not be nested\r\n";
-        state.in_transaction = true;
-        state.transaction_queue.clear();
-        return "+OK\r\n";
-    }
-
-    else if (command == "EXEC") {
-        if (!state.in_transaction) return "-ERR EXEC without MULTI\r\n";
-
-        if (state.is_dirty) {
-            state.in_transaction = false;
-            state.transaction_queue.clear();
-            state.watched_keys.clear();
-            state.is_dirty = false;
-            return "*-1\r\n"; // RESP Null Array
-        }
-
-        std::string final_resp = "*" + std::to_string(state.transaction_queue.size()) + "\r\n";
-        for (const auto& queued_parts : state.transaction_queue) {
-            final_resp += dispatch_command(client_fd, queued_parts, true);
-        }
-
-        state.in_transaction = false;
-        state.transaction_queue.clear();
-        state.watched_keys.clear();
-        state.is_dirty = false;
-        return final_resp;
-    }
-
-    else if (command == "DISCARD") {
-        if (!state.in_transaction) return "-ERR DISCARD without MULTI\r\n";
-        state.transaction_queue.clear();
-        state.in_transaction = false;
-        state.watched_keys.clear();
-        state.is_dirty = false;
-        return "+OK\r\n";
-    }
-
-    else if (command == "WATCH") {
-        if (state.in_transaction) return "-ERR WATCH inside MULTI is not allowed\r\n";
-        if (parts.size() < 5) return "-ERR wrong number of arguments\r\n";
-        for (size_t i = 4; i < parts.size(); i += 2) {
-            std::string key = parts[i];
-            if (std::find(state.watched_keys.begin(), 
-                          state.watched_keys.end(), 
-                          key) == state.watched_keys.end()) {
-                state.watched_keys.push_back(key);
-                g_key_watchers[key].push_back(client_fd);
-            }
-        }
-        return "+OK\r\n";
-    }
-
-    else if (command == "UNWATCH") {
-        for (const std::string& key : state.watched_keys) {
-            if (g_key_watchers.count(key)) {
-                auto& watchers = g_key_watchers[key];
-                watchers.erase(
-                    std::remove(watchers.begin(), watchers.end(), client_fd),
-                    watchers.end()
-                );
-                if (watchers.empty()) {
-                    g_key_watchers.erase(key);
-                }
-            }
-        }
-        state.watched_keys.clear();
-        state.is_dirty = false;
-        return "+OK\r\n";
     }
 
     else if (command == "ECHO") {
@@ -170,8 +71,7 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
             }
         }
         g_kv_store[key] = entry;
-        touch_key(key);
-        if (!is_from_exec) propagate_to_replicas(parts);
+        propagate_to_replicas(parts);
         return "+OK\r\n";
     }
 
@@ -205,9 +105,7 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
             else entry.list_val.insert(entry.list_val.begin(), parts[i]);
         }
 
-        touch_key(key);
-        if (!is_from_exec) propagate_to_replicas(parts);
-
+        propagate_to_replicas(parts);
         int final_length = entry.list_val.size();
         
         while (!entry.list_val.empty()) {
@@ -266,9 +164,7 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
         if (entry.type != ValueType::LIST) return "-WRONGTYPE Operation\r\n";
         if (entry.list_val.empty()) return "$-1\r\n";
 
-        touch_key(key);
-        if (!is_from_exec) propagate_to_replicas(parts);
-
+        propagate_to_replicas(parts);
         if (parts.size() >= 7) {
             long long count = std::stoll(parts[6]);
             if (count < 0) return "-ERR value is out of range\r\n";
@@ -332,8 +228,7 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
 
         if (g_kv_store.find(key) == g_kv_store.end()) {
             g_kv_store[key] = {ValueType::STRING, "1"};
-            touch_key(key);
-            if (!is_from_exec) propagate_to_replicas(parts);
+            propagate_to_replicas(parts);
             return ":1\r\n";
         } else {
             ValueEntry &entry = g_kv_store[key];
@@ -341,8 +236,7 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
                 long long val = std::stoll(entry.value);
                 val++;
                 entry.value = std::to_string(val);
-                touch_key(key);
-                if (!is_from_exec) propagate_to_replicas(parts);
+                propagate_to_replicas(parts);
                 return ":" + entry.value + "\r\n";
             } catch (const std::exception& e) {
                 return "-ERR value is not an integer or out of range\r\n";
@@ -468,57 +362,6 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
         return "";
     }
 
-    else if (command == "PUBLISH") {
-        if (parts.size() < 7) return "-ERR wrong number of arguments\r\n";
-        std::string channel = parts[4], message = parts[6];
-        std::string resp = "*3\r\n$7\r\nmessage\r\n$" + std::to_string(channel.length()) + "\r\n" + channel + "\r\n$" + std::to_string(message.length()) + "\r\n" + message + "\r\n";
-        int count = 0;
-        for (auto const& [fd, state] : g_client_states) {
-            if (std::find(state.subscribed_channels.begin(), state.subscribed_channels.end(), channel) != state.subscribed_channels.end()) {
-                send(fd, resp.c_str(), resp.length(), 0);
-                count++;
-            }
-        }
-        return ":" + std::to_string(count) + "\r\n";
-    }
-
-    else if (command == "SUBSCRIBE") {
-        if (parts.size() < 5) return "-ERR wrong number of arguments\r\n";
-        std::string full_resp = "";
-        for (size_t i = 4; i < parts.size(); i += 2) {
-            std::string channel = parts[i];
-            if (std::find(state.subscribed_channels.begin(), state.subscribed_channels.end(), channel) == state.subscribed_channels.end()) {
-                state.subscribed_channels.push_back(channel);
-            }
-            full_resp += "*3\r\n$9\r\nsubscribe\r\n$" + std::to_string(channel.length()) + "\r\n" + channel + "\r\n";
-            full_resp += ":" + std::to_string(state.subscribed_channels.size()) + "\r\n";
-        }
-        return full_resp;
-    }
-
-    else if (command == "UNSUBSCRIBE") {
-        std::string full_resp = "";
-
-        std::vector<std::string> targets;
-        if (parts.size() < 5) targets = state.subscribed_channels;
-        else {
-            for(size_t i = 4; i < parts.size(); i += 2) targets.push_back(parts[i]);
-        }
-
-        if (targets.empty()) return "*3\r\n$11\r\nunsubscribe\r\n$-1\r\n:0\r\n";
-
-        for (const auto& channel : targets) {
-            auto it = std::find(state.subscribed_channels.begin(), state.subscribed_channels.end(), channel);
-            if (it != state.subscribed_channels.end()) {
-                state.subscribed_channels.erase(it);
-            }
-            full_resp += "*3\r\n$11\r\nunsubscribe\r\n$" + std::to_string(channel.length()) + 
-                         "\r\n" + channel + "\r\n:" + std::to_string(state.subscribed_channels.size()) + "\r\n";
-        }
-        
-        return full_resp;
-    }
-
     else if (command == "ZADD") {
         if (parts.size() < 7) return "-ERR wrong number of arguments\r\n";
         std::string key = parts[4];
@@ -546,8 +389,7 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
             }
         } else { entry.zset_val.insert({member, score}); }
 
-        touch_key(key);
-        if (!is_from_exec) propagate_to_replicas(parts);
+        propagate_to_replicas(parts);
         return exists ? ":0\r\n" : ":1\r\n";;
     }
 
@@ -654,8 +496,7 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
 
         if (it != entry.zset_val.end()) {
             entry.zset_val.erase(it);
-            touch_key(key);
-            if (!is_from_exec) propagate_to_replicas(parts);
+            propagate_to_replicas(parts);
             return ":1\r\n";
         }
         return ":0\r\n";

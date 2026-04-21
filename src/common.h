@@ -68,7 +68,6 @@ struct ClientState {
 };
 
 extern std::unordered_map<int, ClientState> g_client_states;
-extern std::unordered_map<std::string, std::vector<int>> g_key_watchers;
 
 struct BlockedClient {
     int fd;
