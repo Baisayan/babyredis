@@ -8,37 +8,11 @@
 #include "common.h"
 
 std::unordered_map<std::string, ValueEntry> g_kv_store;
-std::vector<BlockedClient> g_blocked_clients_list;
-std::vector<int> g_replicas;
-
-void propagate_to_replicas(const std::vector<std::string>& parts) {
-    if (parts.empty()) return;
-    std::vector<std::string> values;
-    for (size_t i = 2; i < parts.size(); i += 2) values.push_back(parts[i]);
-
-    std::string resp = "*" + std::to_string(values.size()) + "\r\n";
-    for (const auto& val : values) {
-        resp += "$" + std::to_string(val.length()) + "\r\n" + val + "\r\n";
-    }
-
-    g_config.master_repl_offset += resp.length();
-    for (int replica_fd : g_replicas) {
-        send(replica_fd, resp.c_str(), resp.length(), 0);
-    }
-}
-
-// notify a blocked client if key becomes available
-void handle_blocked_clients(int client_fd, const std::string& key, const std::string& value) {
-    std::string resp = "*2\r\n$" + std::to_string(key.length()) + "\r\n" + key + "\r\n";
-    resp += "$" + std::to_string(value.length()) + "\r\n" + value + "\r\n";
-    send(client_fd, resp.c_str(), resp.length(), 0);
-}
 
 std::string dispatch_command(int client_fd, const std::vector<std::string>& parts) {
     if (parts.size() < 3) return "";
 
-    std::string original_cmd= parts[2];
-    std::string command = original_cmd;
+    std::string command= parts[2];
     for (auto &c : command) c = toupper(c);
 
     if (command == "PING") {
@@ -47,8 +21,7 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
 
     else if (command == "ECHO") {
         if (parts.size() < 5) return "-ERR wrong number of arguments\r\n";
-        std::string msg = parts[4];
-        return "$" + std::to_string(msg.length()) + "\r\n" + msg + "\r\n";
+        return "$" + std::to_string(parts[4].length()) + "\r\n" + parts[4] + "\r\n";
     }
 
     else if (command == "SET") {
@@ -68,7 +41,6 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
             }
         }
         g_kv_store[key] = entry;
-        propagate_to_replicas(parts);
         return "+OK\r\n";
     }
 
@@ -92,7 +64,8 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
 
         // Init list if key doesn't exist
         if (g_kv_store.find(key) == g_kv_store.end()) {
-            ValueEntry entry; entry.type = ValueType::LIST;
+            ValueEntry entry;
+            entry.type = ValueType::LIST;
             g_kv_store[key] = entry;
         }
         ValueEntry &entry = g_kv_store[key];
@@ -102,53 +75,7 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
             else entry.list_val.insert(entry.list_val.begin(), parts[i]);
         }
 
-        propagate_to_replicas(parts);
-        int final_length = entry.list_val.size();
-        
-        while (!entry.list_val.empty()) {
-            auto it = std::find_if(
-                g_blocked_clients_list.begin(),
-                g_blocked_clients_list.end(),
-                [&](const BlockedClient& bc) { return bc.key == key; }
-            );
-            
-            if (it == g_blocked_clients_list.end()) break;
-
-            // Pop the first element
-            std::string val = entry.list_val.front();
-            entry.list_val.erase(entry.list_val.begin());
-
-            handle_blocked_clients(it->fd, key, val);
-            g_blocked_clients_list.erase(it);
-        }
-
-        return ":" + std::to_string(final_length) + "\r\n";
-    }
-
-    else if (command == "BLPOP") {
-        if (parts.size() < 7) return "-ERR wrong number of arguments\r\n";
-        std::string key = parts[4];
-        double timeout_sec = std::stod(parts[6]);
-
-        // list exists n not empty, behave like LPOP
-        if (g_kv_store.count(key) && !g_kv_store[key].list_val.empty()) {
-            ValueEntry &entry = g_kv_store[key];
-            std::string val = entry.list_val.front();
-            entry.list_val.erase(entry.list_val.begin());
-            handle_blocked_clients(client_fd, key, val);
-            return "";
-        }
-
-        // otherwise, block client
-        BlockedClient bc;
-        bc.fd = client_fd;
-        bc.key = key;
-        if (timeout_sec > 0) {
-            bc.has_timeout = true;
-            bc.deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds((long long)(timeout_sec * 1000));
-        }
-        g_blocked_clients_list.push_back(bc);
-        return "";
+        return ":" + std::to_string(entry.list_val.size()) + "\r\n";
     }
 
     else if (command == "LPOP") {
@@ -161,7 +88,6 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
         if (entry.type != ValueType::LIST) return "-WRONGTYPE Operation\r\n";
         if (entry.list_val.empty()) return "$-1\r\n";
 
-        propagate_to_replicas(parts);
         if (parts.size() >= 7) {
             long long count = std::stoll(parts[6]);
             if (count < 0) return "-ERR value is out of range\r\n";
@@ -225,7 +151,6 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
 
         if (g_kv_store.find(key) == g_kv_store.end()) {
             g_kv_store[key] = {ValueType::STRING, "1"};
-            propagate_to_replicas(parts);
             return ":1\r\n";
         } else {
             ValueEntry &entry = g_kv_store[key];
@@ -233,130 +158,11 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
                 long long val = std::stoll(entry.value);
                 val++;
                 entry.value = std::to_string(val);
-                propagate_to_replicas(parts);
                 return ":" + entry.value + "\r\n";
             } catch (const std::exception& e) {
                 return "-ERR value is not an integer or out of range\r\n";
             }
         }
-    }
-    
-    else if (command == "CONFIG") {
-        if (parts.size() < 7) return "-ERR wrong number of arguments\r\n";
-        
-        std::string sub_command = parts[4];
-        for (auto &c : sub_command) c = toupper(c);
-
-        if (sub_command == "GET") {
-            std::string param = parts[6];
-            std::string value = "";
-
-            if (param == "dir") {
-                value = g_config.dir;
-            } else if (param == "dbfilename") {
-                value = g_config.dbfilename;
-            }
-
-            std::string resp = "*2\r\n";
-            resp += "$" + std::to_string(param.length()) + "\r\n" + param + "\r\n";
-            resp += "$" + std::to_string(value.length()) + "\r\n" + value + "\r\n";
-            return resp;
-        }
-    }
-
-    else if (command == "KEYS") {
-        if (parts.size() < 5) return "-ERR wrong number of arguments\r\n";
-        std::string pattern = parts[4];
-
-        if (pattern == "*") {
-            std::string resp = "*" + std::to_string(g_kv_store.size()) + "\r\n";
-            for (auto const& [key, val] : g_kv_store) {
-                resp += "$" + std::to_string(key.length()) + "\r\n" + key + "\r\n";
-            }
-            return resp;
-        }
-        return "*0\r\n";
-    }
-
-    else if (command == "INFO") {
-        std::string role = g_config.is_replica ? "slave" : "master";
-        std::string info_content = "role:" + role + "\n";
-
-        info_content += "master_replid:" + g_config.master_replid + "\n";
-        info_content += "master_repl_offset:" + std::to_string(g_config.master_repl_offset) + "\n";
-
-        return "$" + std::to_string(info_content.length()) + "\r\n" + info_content + "\r\n";
-    }
-
-    else if (command == "REPLCONF") {
-        if (parts.size() >= 7) {
-            std::string sub_command = parts[4];
-            for (auto &c : sub_command) c = toupper(c);
-            if (sub_command == "GETACK") {
-                std::string offset_str = std::to_string(g_config.processed_bytes);
-                return "*3\r\n$8\r\nREPLCONF\r\n$3\r\nACK\r\n$" + 
-                       std::to_string(offset_str.length()) + "\r\n" + offset_str + "\r\n";
-            }
-            if (sub_command == "ACK") {
-                g_replica_offsets[client_fd] = std::stoll(parts[6]);
-                return "";
-            }
-        }
-        return "+OK\r\n";
-    }
-
-    else if (command == "PSYNC") {
-        std::string full_resync = "+FULLRESYNC " + g_config.master_replid + " 0\r\n";
-        send(client_fd, full_resync.c_str(), full_resync.length(), 0);
-
-        std::string hex_rdb = "524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000ff10aa32556c03d1ad";
-        
-        std::vector<char> rdb_binary;
-        for (size_t i = 0; i < hex_rdb.length(); i += 2) {
-            std::string byteString = hex_rdb.substr(i, 2);
-            char byte = (char)strtol(byteString.c_str(), NULL, 16);
-            rdb_binary.push_back(byte);
-        }
-
-        // send the length header
-        std::string header = "$" + std::to_string(rdb_binary.size()) + "\r\n";
-        send(client_fd, header.c_str(), header.length(), 0);
-        send(client_fd, rdb_binary.data(), rdb_binary.size(), 0);
-
-        g_replicas.push_back(client_fd);
-        g_replica_offsets[client_fd] = 0;
-        return "";
-    }
-
-    else if (command == "WAIT") {
-        if (parts.size() < 7) return "-ERR wrong number of arguments\r\n";
-        int num_replicas_requested = std::stoi(parts[4]);
-        int timeout_ms = std::stoi(parts[6]);
-
-        int in_sync = 0;
-        for (int replica_fd : g_replicas) {
-            if (g_replica_offsets[replica_fd] >= g_config.master_repl_offset) {
-                in_sync++;
-            }
-        }
-
-        if (in_sync >= num_replicas_requested || g_config.master_repl_offset == 0) {
-            return ":" + std::to_string(in_sync) + "\r\n";
-        }
-
-        std::string getack = "*3\r\n$8\r\nREPLCONF\r\n$6\r\nGETACK\r\n$1\r\n*\r\n";
-        for (int replica_fd : g_replicas) {
-            send(replica_fd, getack.c_str(), getack.length(), 0);
-        }
-
-        WaitingClient wc;
-        wc.fd = client_fd;
-        wc.target_count = num_replicas_requested;
-        wc.target_offset = g_config.master_repl_offset;
-        wc.deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
-        g_waiting_clients.push_back(wc);
-
-        return "";
     }
 
     else if (command == "ZADD") {
@@ -386,7 +192,6 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
             }
         } else { entry.zset_val.insert({member, score}); }
 
-        propagate_to_replicas(parts);
         return exists ? ":0\r\n" : ":1\r\n";;
     }
 
@@ -493,7 +298,6 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
 
         if (it != entry.zset_val.end()) {
             entry.zset_val.erase(it);
-            propagate_to_replicas(parts);
             return ":1\r\n";
         }
         return ":0\r\n";
@@ -524,7 +328,6 @@ void handle_client(int client_fd) {
     char buffer[4096];
     int bytes_read = recv(client_fd, buffer, sizeof(buffer) - 1, 0);
     if (bytes_read <= 0) return;
-    buffer[bytes_read] = '\0';
 
     std::string data(buffer, bytes_read);
     std::vector<std::string> all_parts = split_resp(data);
@@ -536,27 +339,16 @@ void handle_client(int client_fd) {
         int num_elements = std::stoi(all_parts[i].substr(1));
         std::vector<std::string> parts;
         size_t elements_to_capture = 1 + (num_elements * 2);
-        long long current_command_size = 0;
 
         for (size_t j = 0; j < elements_to_capture && i < all_parts.size(); ++j) {
-            current_command_size += all_parts[i].length() + 2;
             parts.push_back(all_parts[i++]);
         }
 
         if (parts.size() < 3) continue;
-
         std::string result = dispatch_command(client_fd, parts);
+
         if (!result.empty()) {
-            bool is_getack_reply = (parts[2] == "REPLCONF" &&
-                parts.size() >= 7 && (parts[4] == "GETACK"));
-
-            if (client_fd != g_master_fd || is_getack_reply) {
-                send(client_fd, result.c_str(), result.length(), 0);
-            }
-        }
-
-        if (client_fd == g_master_fd) {
-            g_config.processed_bytes += current_command_size;
+            send(client_fd, result.c_str(), result.length(), 0);
         }
     }
 }

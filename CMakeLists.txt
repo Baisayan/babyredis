@@ -7,9 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(SOURCE_FILES 
     src/main.cpp 
     src/commands.cpp 
-    src/resp_parser.cpp 
-    src/rdb_loader.cpp 
-    src/replica_manager.cpp
+    src/resp_parser.cpp
 )
 add_executable(babyredis ${SOURCE_FILES})
 
