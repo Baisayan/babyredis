@@ -5,9 +5,27 @@
 #include <vector>
 #include <iomanip>
 #include <sstream>
+#include <fstream>
 #include "common.h"
 
 std::unordered_map<std::string, ValueEntry> g_kv_store;
+
+void append_to_aof(int client_fd, const std::vector<std::string>& parts) {
+    if (client_fd == -1) return;
+    if (g_config.appendonly != "yes" || g_config.active_aof_path.empty()) return;
+
+    std::ofstream aof_file(g_config.active_aof_path, std::ios::app | std::ios::binary);
+    if (!aof_file.is_open()) return;
+    for (const auto& part : parts) {
+        aof_file << part << "\r\n";
+    }
+
+    if (g_config.appendfsync == "always") {
+        aof_file.flush();
+    }
+    aof_file.close();
+}
+
 
 std::string dispatch_command(int client_fd, const std::vector<std::string>& parts) {
     if (parts.size() < 3) return "";
@@ -41,6 +59,7 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
             }
         }
         g_kv_store[key] = entry;
+        append_to_aof(client_fd, parts);
         return "+OK\r\n";
     }
 
@@ -75,6 +94,7 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
             else entry.list_val.insert(entry.list_val.begin(), parts[i]);
         }
 
+        append_to_aof(client_fd, parts);
         return ":" + std::to_string(entry.list_val.size()) + "\r\n";
     }
 
@@ -158,6 +178,7 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
                 long long val = std::stoll(entry.value);
                 val++;
                 entry.value = std::to_string(val);
+                append_to_aof(client_fd, parts);
                 return ":" + entry.value + "\r\n";
             } catch (const std::exception& e) {
                 return "-ERR value is not an integer or out of range\r\n";
@@ -192,6 +213,7 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
             }
         } else { entry.zset_val.insert({member, score}); }
 
+        append_to_aof(client_fd, parts);
         return exists ? ":0\r\n" : ":1\r\n";;
     }
 
@@ -300,6 +322,8 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
             entry.zset_val.erase(it);
             return ":1\r\n";
         }
+
+        append_to_aof(client_fd, parts);
         return ":0\r\n";
     }
 
@@ -318,6 +342,30 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
                 return "+zset\r\n";
             default:
                 return "+none\r\n";
+        }
+    }
+
+    else if (command == "CONFIG") {
+        if (parts.size() < 7) return "-ERR wrong number of arguments\r\n";
+        
+        std::string sub_command = parts[4];
+        for (auto &c : sub_command) c = toupper(c);
+
+        if (sub_command == "GET") {
+            std::string parameter = parts[6];
+            std::string value = "";
+
+            if (parameter == "dir") value = g_config.dir;
+            else if (parameter == "appendonly") value = g_config.appendonly;
+            else if (parameter == "appenddirname") value = g_config.appenddirname;
+            else if (parameter == "appendfilename") value = g_config.appendfilename;
+            else if (parameter == "appendfsync") value = g_config.appendfsync;
+            else return "*0\r\n";
+
+            std::string resp = "*2\r\n";
+            resp += "$" + std::to_string(parameter.length()) + "\r\n" + parameter + "\r\n";
+            resp += "$" + std::to_string(value.length()) + "\r\n" + value + "\r\n";
+            return resp;
         }
     }
 

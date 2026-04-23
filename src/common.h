@@ -9,6 +9,12 @@
 
 struct RedisConfig {
     int port = 6379;
+    std::string dir = ".";
+    std::string appendonly = "no";
+    std::string appenddirname = "appendonlydir";
+    std::string appendfilename = "appendonly.aof";
+    std::string appendfsync = "everysec";
+    std::string active_aof_path = "";
 };
 extern RedisConfig g_config;
 
@@ -34,5 +40,6 @@ struct ValueEntry {
 
 extern std::unordered_map<std::string, ValueEntry> g_kv_store;
 std::vector<std::string> split_resp(const std::string& s);
+std::string dispatch_command(int client_fd, const std::vector<std::string>& parts);
 
 #endif
