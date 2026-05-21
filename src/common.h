@@ -18,7 +18,9 @@ struct ZSetMember {
     std::string member;
     double score;
     bool operator<(const ZSetMember& other) const {
-        if (score != other.score) return score < other.score;
+        if (score != other.score) {
+            return score < other.score;
+        }
         return member < other.member;
     }
 };
@@ -32,7 +34,20 @@ struct ValueEntry {
     bool has_expiry = false;
 };
 
+struct Client {
+    int fd;
+    std::string input_buffer;
+    std::string output_buffer;
+    bool closed = false;
+};
+
 extern std::unordered_map<std::string, ValueEntry> g_kv_store;
 std::vector<std::string> split_resp(const std::string& s);
+std::string dispatch_command(
+    const std::vector<std::string>& parts
+);
+
+void handle_read(Client& client);
+void handle_write(Client& client);
 
 #endif

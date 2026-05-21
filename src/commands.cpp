@@ -1,13 +1,12 @@
-#include <sys/socket.h>
 #include <algorithm>
-#include <vector>
 #include <iomanip>
 #include <sstream>
+
 #include "common.h"
 
 std::unordered_map<std::string, ValueEntry> g_kv_store;
 
-std::string dispatch_command(int client_fd, const std::vector<std::string>& parts) {
+std::string dispatch_command(const std::vector<std::string>& parts) {
     if (parts.size() < 3) return "";
 
     std::string command= parts[2];
@@ -321,33 +320,4 @@ std::string dispatch_command(int client_fd, const std::vector<std::string>& part
     }
 
     return "-ERR unknown command\r\n";
-}
-
-void handle_client(int client_fd) {
-    char buffer[4096];
-    int bytes_read = recv(client_fd, buffer, sizeof(buffer) - 1, 0);
-    if (bytes_read <= 0) return;
-
-    std::string data(buffer, bytes_read);
-    std::vector<std::string> all_parts = split_resp(data);
-
-    size_t i = 0;
-    while (i < all_parts.size()) {
-        if (all_parts[i][0] != '*') { i++; continue; }
-
-        int num_elements = std::stoi(all_parts[i].substr(1));
-        std::vector<std::string> parts;
-        size_t elements_to_capture = 1 + (num_elements * 2);
-
-        for (size_t j = 0; j < elements_to_capture && i < all_parts.size(); ++j) {
-            parts.push_back(all_parts[i++]);
-        }
-
-        if (parts.size() < 3) continue;
-        std::string result = dispatch_command(client_fd, parts);
-
-        if (!result.empty()) {
-            send(client_fd, result.c_str(), result.length(), 0);
-        }
-    }
 }
