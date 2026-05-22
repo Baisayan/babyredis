@@ -6,6 +6,7 @@
 #include <chrono>
 #include <vector>
 #include <set>
+#include <cstddef>
 
 struct RedisConfig {
     int port = 6379;
@@ -33,21 +34,37 @@ struct ValueEntry {
     std::chrono::time_point<std::chrono::steady_clock> expiry_time;
     bool has_expiry = false;
 };
+extern std::unordered_map<std::string, ValueEntry> g_kv_store;
+
+enum class ParseResultType {COMPLETE, INCOMPLETE, ERROR};
+
+struct ParseResult {
+    ParseResultType type;
+    std::vector<std::string> command;
+    std::string error;
+};
+
+struct RespParser {
+    size_t pos = 0;
+    int expected_args = -1;
+    std::vector<std::string> args;
+};
 
 struct Client {
     int fd;
     std::string input_buffer;
     std::string output_buffer;
     bool closed = false;
+    RespParser parser;
 };
 
-extern std::unordered_map<std::string, ValueEntry> g_kv_store;
-std::vector<std::string> split_resp(const std::string& s);
 std::string dispatch_command(
     const std::vector<std::string>& parts
 );
 
 void handle_read(Client& client);
 void handle_write(Client& client);
+
+ParseResult parse_resp(Client& client);
 
 #endif

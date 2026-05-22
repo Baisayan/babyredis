@@ -3,6 +3,95 @@
 
 #include "common.h"
 
+static bool read_line(const std::string& buffer, size_t start, size_t& line_end) {
+    size_t pos = buffer.find("\r\n", start);
+    if (pos == std::string::npos) return false;
+
+    line_end = pos;
+    return true;
+}
+
+ParseResult parse_resp(Client& client) {
+    RespParser& parser = client.parser;
+    std::string& buffer = client.input_buffer;
+    size_t& pos = parser.pos;
+
+    if (parser.expected_args == -1) {
+        if (pos >= buffer.size()) {
+            return {ParseResultType::INCOMPLETE, {}, ""};
+        }
+
+        if (buffer[pos] != '*') {
+            return {ParseResultType::ERROR, {}, "Protocol error: expected '*'"};
+        }
+
+        size_t line_end;
+        if (!read_line(buffer, pos, line_end)) {
+            return {ParseResultType::INCOMPLETE, {}, ""};
+        }
+
+        std::string count_str = buffer.substr(pos + 1, line_end - pos - 1);
+
+        try {
+            parser.expected_args = std::stoi(count_str);
+        }
+        catch (...) {
+            return {ParseResultType::ERROR, {}, "Protocol error: invalid multibulk length"};
+        }
+        pos = line_end + 2;
+    }
+
+    while (static_cast<int>(parser.args.size()) < parser.expected_args) {
+        if (pos >= buffer.size()) {
+            return {ParseResultType::INCOMPLETE, {}, ""};
+        }
+
+        if (buffer[pos] != '$') {
+            return {ParseResultType::ERROR, {}, "Protocol error: expected '$'"};
+        }
+
+        size_t line_end;
+        if (!read_line(buffer, pos, line_end)) {
+            return {ParseResultType::INCOMPLETE, {}, ""};
+        }
+
+        int bulk_len = 0;
+        try {
+            std::string len_str = buffer.substr(
+                pos + 1,
+                line_end - pos - 1
+            );
+            bulk_len = std::stoi(len_str);
+        }
+        catch (...) {
+            return {ParseResultType::ERROR, {}, "Protocol error: invalid bulk length"};
+        }
+        pos = line_end + 2;
+
+        if (pos + bulk_len + 2 > buffer.size()) {
+            return {ParseResultType::INCOMPLETE, {}, ""};
+        }
+
+        parser.args.emplace_back(buffer.data() + pos, bulk_len);
+
+        pos += bulk_len;
+
+        // validate trailing CRLF
+        if (buffer[pos] != '\r' || buffer[pos + 1] != '\n') {
+            return {ParseResultType::ERROR, {}, "Protocol error: invalid bulk termination"};
+        }
+        pos += 2;
+    }
+
+    ParseResult result{ParseResultType::COMPLETE, parser.args, ""};
+    buffer.erase(0, pos);
+    parser.pos = 0;
+    parser.expected_args = -1;
+    parser.args.clear();
+
+    return result;
+}
+
 void handle_read(Client& client) {
     char buffer[4096];
 
@@ -25,17 +114,22 @@ void handle_read(Client& client) {
         }
     }
 
-    if (client.input_buffer.empty()) return;
+    while (true) {
+        ParseResult result = parse_resp(client);
 
-    std::vector<std::string> parts = split_resp(client.input_buffer);
-    client.input_buffer.clear();
+        if (result.type == ParseResultType::INCOMPLETE) break;
 
-    if (parts.empty()) return;
+        if (result.type == ParseResultType::ERROR) {
+            client.output_buffer += "-ERR " + result.error + "\r\n";
+            client.closed = true;
+            return;
+        }
 
-    std::string response = dispatch_command(parts);
+        std::string response = dispatch_command(result.command);
 
-    if (!response.empty()) {
-        client.output_buffer += response;
+        if (!response.empty()) {
+            client.output_buffer += response;
+        }
     }
 }
 

@@ -85,6 +85,7 @@ int main(int argc, char** argv) {
             break;
         }
 
+        // accept new clients
         if (poll_fds[0].revents & POLLIN) {
             while (true) {
                 int client_fd = accept(server_fd, nullptr, nullptr);
@@ -106,14 +107,12 @@ int main(int argc, char** argv) {
             }
         }
 
+        // handle existing clients
         for (size_t i = 1; i < poll_fds.size(); ++i) {
             pollfd& pfd = poll_fds[i];
             auto it = clients.find(pfd.fd);
 
-            if (it == clients.end()) {
-                continue;
-            }
-
+            if (it == clients.end()) continue;
             Client& client = it->second;
 
             if (pfd.revents & POLLIN) {
@@ -124,10 +123,7 @@ int main(int argc, char** argv) {
                 handle_write(client);
             }
 
-            if (
-                pfd.revents &
-                (POLLERR | POLLHUP | POLLNVAL)
-            ) {
+            if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
                 client.closed = true;
             }
 

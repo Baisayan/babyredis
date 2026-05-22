@@ -7,23 +7,23 @@
 std::unordered_map<std::string, ValueEntry> g_kv_store;
 
 std::string dispatch_command(const std::vector<std::string>& parts) {
-    if (parts.size() < 3) return "";
+    if (parts.empty()) return "-ERR empty command\r\n";
 
-    std::string command= parts[2];
-    for (auto &c : command) c = toupper(c);
+    std::string command = parts[0];
+    for (char& c : command) c = toupper(c);
 
     if (command == "PING") {
         return "+PONG\r\n";
     }
 
     else if (command == "ECHO") {
-        if (parts.size() < 5) return "-ERR wrong number of arguments\r\n";
-        return "$" + std::to_string(parts[4].length()) + "\r\n" + parts[4] + "\r\n";
+        if (parts.size() != 2) return "-ERR wrong number of arguments\r\n";
+        return "$" + std::to_string(parts[1].size()) + "\r\n" + parts[1] + "\r\n";
     }
 
     else if (command == "SET") {
-        if (parts.size() < 7) return "-ERR wrong number of arguments\r\n";
-        std::string key = parts[4], value = parts[6];
+        if (parts.size() < 3) return "-ERR wrong number of arguments\r\n";
+        std::string key = parts[1], value = parts[2];
         ValueEntry entry;
         entry.type = ValueType::STRING;
         entry.value = value;
@@ -42,8 +42,8 @@ std::string dispatch_command(const std::vector<std::string>& parts) {
     }
 
     else if (command == "GET") {
-        if (parts.size() < 5) return "-ERR wrong number of arguments\r\n";
-        std::string key = parts[4];
+        if (parts.size() != 2) return "-ERR wrong number of arguments\r\n";
+        std::string key = parts[1];
         if (g_kv_store.count(key)) {
             ValueEntry &entry = g_kv_store[key];
             if (entry.has_expiry && std::chrono::steady_clock::now() >= entry.expiry_time) {
