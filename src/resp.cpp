@@ -1,7 +1,37 @@
 #include <sys/socket.h>
+#include <charconv>
 #include <cerrno>
-
 #include "common.h"
+
+std::string resp_simple_string(const std::string& value) {
+    return "+" + value + "\r\n";
+}
+
+std::string resp_error(const std::string& value) {
+    return "-ERR " + value + "\r\n";
+}
+
+std::string resp_bulk_string(const std::string& value) {
+    return "$" + std::to_string(value.size()) + "\r\n" + value + "\r\n";
+}
+
+std::string resp_null() {
+    return "$-1\r\n";
+}
+
+std::string resp_integer(long long value) {
+    return ":" + std::to_string(value) + "\r\n";
+}
+
+std::string resp_array(const std::vector<std::string>& values) {
+    std::string result = "*" + std::to_string(values.size()) + "\r\n";
+
+    for (const auto& value : values) {
+        result += resp_bulk_string(value);
+    }
+
+    return result;
+}
 
 static bool read_line(const std::string& buffer, size_t start, size_t& line_end) {
     size_t pos = buffer.find("\r\n", start);
@@ -57,10 +87,7 @@ ParseResult parse_resp(Client& client) {
 
         int bulk_len = 0;
         try {
-            std::string len_str = buffer.substr(
-                pos + 1,
-                line_end - pos - 1
-            );
+            std::string len_str = buffer.substr(pos + 1, line_end - pos - 1);
             bulk_len = std::stoi(len_str);
         }
         catch (...) {
@@ -73,7 +100,6 @@ ParseResult parse_resp(Client& client) {
         }
 
         parser.args.emplace_back(buffer.data() + pos, bulk_len);
-
         pos += bulk_len;
 
         // validate trailing CRLF
@@ -94,7 +120,6 @@ ParseResult parse_resp(Client& client) {
 
 void handle_read(Client& client) {
     char buffer[4096];
-
     while (true) {
         ssize_t bytes_read = recv(client.fd, buffer, sizeof(buffer), 0);
 
@@ -116,11 +141,10 @@ void handle_read(Client& client) {
 
     while (true) {
         ParseResult result = parse_resp(client);
-
         if (result.type == ParseResultType::INCOMPLETE) break;
 
         if (result.type == ParseResultType::ERROR) {
-            client.output_buffer += "-ERR " + result.error + "\r\n";
+            client.output_buffer += resp_error(result.error);
             client.closed = true;
             return;
         }

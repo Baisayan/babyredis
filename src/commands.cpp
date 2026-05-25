@@ -1,323 +1,552 @@
 #include <algorithm>
 #include <iomanip>
 #include <sstream>
-
 #include "common.h"
 
 std::unordered_map<std::string, ValueEntry> g_kv_store;
 
+static inline std::string wrong_type() {
+    return "-WRONGTYPE Operation against a key holding the wrong kind of value\r\n";
+}
+
 std::string dispatch_command(const std::vector<std::string>& parts) {
-    if (parts.empty()) return "-ERR empty command\r\n";
+    if (parts.empty()) {
+        return resp_error("empty command");
+    }
 
     std::string command = parts[0];
     for (char& c : command) c = toupper(c);
 
     if (command == "PING") {
-        return "+PONG\r\n";
+        if (parts.size() == 1) {
+            return resp_simple_string("PONG");
+        }
+
+        if (parts.size() == 2) {
+            return resp_bulk_string(parts[1]);
+        }
+
+        return resp_error("wrong number of arguments");
     }
 
     else if (command == "ECHO") {
-        if (parts.size() != 2) return "-ERR wrong number of arguments\r\n";
-        return "$" + std::to_string(parts[1].size()) + "\r\n" + parts[1] + "\r\n";
+        if (parts.size() != 2) {
+            return resp_error("wrong number of arguments");
+        }
+
+        return resp_bulk_string(parts[1]);
     }
 
     else if (command == "SET") {
-        if (parts.size() < 3) return "-ERR wrong number of arguments\r\n";
-        std::string key = parts[1], value = parts[2];
+        if (parts.size() < 3) {
+            return resp_error("wrong number of arguments");
+        }
+
+        const std::string& key = parts[1];
+        const std::string& value = parts[2];
         ValueEntry entry;
         entry.type = ValueType::STRING;
         entry.value = value;
 
-        if (parts.size() >= 10) {
-            std::string option = parts[8];
-            for (auto &c : option) c = toupper(c);
-            if (option == "PX") {
+        if (parts.size() == 5) {
+            std::string option = parts[3];
+            for (char& c : option) {
+                c = toupper(c);
+            }
+
+            if (option != "PX") {
+                return resp_error("syntax error");
+            }
+
+            try {
+                long long ttl_ms = std::stoll(parts[4]);
+
+                if (ttl_ms <= 0) {
+                    return resp_error("invalid expire time");
+                }
+
                 entry.has_expiry = true;
-                entry.expiry_time = std::chrono::steady_clock::now() +
-                                    std::chrono::milliseconds(std::stoll(parts[10]));
+                entry.expiry_time =
+                    std::chrono::steady_clock::now() +
+                    std::chrono::milliseconds(ttl_ms);
+            }
+            catch (...) {
+                return resp_error("value is not an integer or out of range");
             }
         }
-        g_kv_store[key] = entry;
-        return "+OK\r\n";
+
+        else if (parts.size() != 3) {
+            return resp_error("syntax error");
+        }
+
+        g_kv_store[key] = std::move(entry);
+        return resp_simple_string("OK");
     }
 
     else if (command == "GET") {
-        if (parts.size() != 2) return "-ERR wrong number of arguments\r\n";
-        std::string key = parts[1];
-        if (g_kv_store.count(key)) {
-            ValueEntry &entry = g_kv_store[key];
-            if (entry.has_expiry && std::chrono::steady_clock::now() >= entry.expiry_time) {
-                g_kv_store.erase(key);
-                return "$-1\r\n";
-            }
-            return "$" + std::to_string(entry.value.length()) + "\r\n" + entry.value + "\r\n";
-        }     
-        return "$-1\r\n";
+        if (parts.size() != 2) {
+            return resp_error("wrong number of arguments");
+        }
+
+        const std::string& key = parts[1];
+        auto it = g_kv_store.find(key);
+        if (it == g_kv_store.end()) {
+            return resp_null();
+        }
+
+        ValueEntry& entry = it->second;
+        if (entry.type != ValueType::STRING) {
+            return wrong_type();
+        }
+
+        if (entry.has_expiry && std::chrono::steady_clock::now() >= entry.expiry_time) {
+            g_kv_store.erase(it);
+            return resp_null();
+        }
+
+        return resp_bulk_string(entry.value);
     }
 
     else if (command == "RPUSH" || command == "LPUSH") {
-        if (parts.size() < 7) return "-ERR wrong number of arguments\r\n";
-        std::string key = parts[4];
+        if (parts.size() < 3) {
+            return resp_error("wrong number of arguments");
+        }
+        const std::string& key = parts[1];
+        auto it = g_kv_store.find(key);
 
-        // Init list if key doesn't exist
-        if (g_kv_store.find(key) == g_kv_store.end()) {
+        // create list if missing
+        if (it == g_kv_store.end()) {
             ValueEntry entry;
             entry.type = ValueType::LIST;
-            g_kv_store[key] = entry;
-        }
-        ValueEntry &entry = g_kv_store[key];
-
-        for (size_t i = 6; i < parts.size(); i += 2) {
-            if (command == "RPUSH") entry.list_val.push_back(parts[i]);
-            else entry.list_val.insert(entry.list_val.begin(), parts[i]);
+            auto result = g_kv_store.emplace(key, std::move(entry));
+            it = result.first;
         }
 
-        return ":" + std::to_string(entry.list_val.size()) + "\r\n";
+        ValueEntry& entry = it->second;
+        if (entry.type != ValueType::LIST) {
+            return wrong_type();
+        }
+
+        for (size_t i = 2; i < parts.size(); ++i) {
+            if (command == "RPUSH") {
+                entry.list_val.push_back(parts[i]);
+            }
+
+            else {
+                entry.list_val.insert(entry.list_val.begin(), parts[i]);
+            }
+        }
+
+        return resp_integer(static_cast<long long>(entry.list_val.size()));
     }
 
     else if (command == "LPOP") {
-        if (parts.size() < 5) return "-ERR wrong number of arguments\r\n";
-        std::string key = parts[4];
-
-        if (g_kv_store.find(key) == g_kv_store.end()) return "$-1\r\n";
-
-        ValueEntry &entry = g_kv_store[key];
-        if (entry.type != ValueType::LIST) return "-WRONGTYPE Operation\r\n";
-        if (entry.list_val.empty()) return "$-1\r\n";
-
-        if (parts.size() >= 7) {
-            long long count = std::stoll(parts[6]);
-            if (count < 0) return "-ERR value is out of range\r\n";
-
-            size_t num_to_pop = std::min((size_t)count, entry.list_val.size());
-            std::string resp = "*" + std::to_string(num_to_pop) + "\r\n";
-
-            for (size_t i = 0; i < num_to_pop; ++i) {
-                std::string val = entry.list_val.front();
-                entry.list_val.erase(entry.list_val.begin());
-                resp += "$" + std::to_string(val.length()) + "\r\n" + val + "\r\n";
-            }
-            return resp;
-        } else {
-            std::string val = entry.list_val.front();
-            entry.list_val.erase(entry.list_val.begin());
-            return "$" + std::to_string(val.length()) + "\r\n" + val + "\r\n";
+        if (parts.size() != 2 && parts.size() != 3) {
+            return resp_error("wrong number of arguments");
         }
+
+        const std::string& key = parts[1];
+        auto it = g_kv_store.find(key);
+
+        if (it == g_kv_store.end()) {
+            return resp_null();
+        }
+
+        ValueEntry& entry = it->second;
+        if (entry.type != ValueType::LIST) {
+            return wrong_type();
+        }
+
+        if (entry.list_val.empty()) {
+            return resp_null();
+        }
+
+        if (parts.size() == 2) {
+            std::string value = std::move(entry.list_val.front());
+            entry.list_val.erase(entry.list_val.begin());
+            return resp_bulk_string(value);
+        }
+
+        long long count = 0;
+        try {
+            count = std::stoll(parts[2]);
+            if (count < 0) {
+                return resp_error("value is out of range");
+            }
+        }
+        catch (...) {
+            return resp_error("value is not an integer or out of range");
+        }
+
+        size_t pop_count = std::min(static_cast<size_t>(count), entry.list_val.size());
+        std::vector<std::string> values;
+
+        for (size_t i = 0; i < pop_count; ++i) {
+            values.push_back(std::move(entry.list_val.front()));
+            entry.list_val.erase(entry.list_val.begin());
+        }
+
+        return resp_array(values);
     }
 
     else if (command == "LLEN") {
-        if (parts.size() < 5) return "-ERR wrong number of arguments\r\n";
-        std::string key = parts[4];
-        if (g_kv_store.find(key) == g_kv_store.end()) return ":0\r\n";
+        if (parts.size() != 2) {
+            return resp_error("wrong number of arguments");
+        }
 
-        ValueEntry &entry = g_kv_store[key];
-        if (entry.type != ValueType::LIST) return "-WRONGTYPE Operation\r\n";
-        return ":" + std::to_string(entry.list_val.size()) + "\r\n";
+        const std::string& key = parts[1];
+        auto it = g_kv_store.find(key);
+
+        if (it == g_kv_store.end()) {
+            return resp_integer(0);
+        }
+
+        ValueEntry& entry = it->second;
+        if (entry.type != ValueType::LIST) {
+            return wrong_type();
+        }
+
+        return resp_integer(static_cast<long long>(entry.list_val.size()));
     }
 
     else if (command == "LRANGE") {
-        if (parts.size() < 9) return "-ERR wrong number of arguments\r\n";
-        std::string key = parts[4];
-        long long start = std::stoll(parts[6]);
-        long long stop = std::stoll(parts[8]);
-
-        if (g_kv_store.find(key) == g_kv_store.end()) return "*0\r\n";
-
-        ValueEntry &entry = g_kv_store[key];
-        if (entry.type != ValueType::LIST) return "-WRONGTYPE Operation\r\n";
-
-        long long list_len = (long long)entry.list_val.size();
-        if (start < 0) start = list_len + start;
-        if (start < 0) start = 0;
-        if (stop < 0) stop = list_len + stop;
-        if (start >= list_len || start > stop) return "*0\r\n";
-        if (stop >= list_len) stop = list_len - 1;
-
-        size_t num_elements = (size_t)(stop - start + 1);
-        std::string resp = "*" + std::to_string(num_elements) + "\r\n";
-        for (long long i = start; i <= stop; ++i) {
-            std::string val = entry.list_val[(size_t)i];
-            resp += "$" + std::to_string(val.length()) + "\r\n" + val + "\r\n";
+        if (parts.size() != 4) {
+            return resp_error("wrong number of arguments");
         }
-        return resp;
+
+        const std::string& key = parts[1];
+        auto it = g_kv_store.find(key);
+
+        if (it == g_kv_store.end()) {
+            return resp_array({});
+        }
+
+        ValueEntry& entry = it->second;
+        if (entry.type != ValueType::LIST) {
+            return wrong_type();
+        }
+
+        long long start;
+        long long stop;
+        try {
+            start = std::stoll(parts[2]);
+            stop = std::stoll(parts[3]);
+        }
+        catch (...) {
+            return resp_error("value is not an integer or out of range");
+        }
+
+        long long list_size = static_cast<long long>(entry.list_val.size());
+
+        if (start < 0) {
+            start = list_size + start;
+        }
+
+        if (stop < 0) {
+            stop = list_size + stop;
+        }
+
+        if (start < 0) {
+            start = 0;
+        }
+
+        if (stop >= list_size) {
+            stop = list_size - 1;
+        }
+
+        if (start > stop || start >= list_size) {
+            return resp_array({});
+        }
+
+        std::vector<std::string> values;
+        for (long long i = start; i <= stop; ++i) {
+            values.push_back(entry.list_val[i]);
+        }
+
+        return resp_array(values);
     }
 
     else if (command == "INCR") {
-        if (parts.size() < 5) return "-ERR wrong number of arguments\r\n";
-        std::string key = parts[4];
+        if (parts.size() != 2) {
+            return resp_error("wrong number of arguments");
+        }
 
-        if (g_kv_store.find(key) == g_kv_store.end()) {
-            g_kv_store[key] = {ValueType::STRING, "1"};
-            return ":1\r\n";
-        } else {
-            ValueEntry &entry = g_kv_store[key];
-            try {
-                long long val = std::stoll(entry.value);
-                val++;
-                entry.value = std::to_string(val);
-                return ":" + entry.value + "\r\n";
-            } catch (const std::exception& e) {
-                return "-ERR value is not an integer or out of range\r\n";
-            }
+        const std::string& key = parts[1];
+        auto it = g_kv_store.find(key);
+
+        if (it == g_kv_store.end()) {
+            ValueEntry entry;
+            entry.type = ValueType::STRING;
+            entry.value = "1";
+            g_kv_store[key] = std::move(entry);
+            return resp_integer(1);
+        }
+
+        ValueEntry& entry = it->second;
+        if (entry.type != ValueType::STRING) {
+            return wrong_type();
+        }
+
+        try {
+            long long value = std::stoll(entry.value);
+            ++value;
+            entry.value =std::to_string(value);
+            return resp_integer(value);
+        }
+        catch (...) {
+            return resp_error("value is not an integer or out of range");
         }
     }
 
     else if (command == "ZADD") {
-        if (parts.size() < 7) return "-ERR wrong number of arguments\r\n";
-        std::string key = parts[4];
-        double score = std::stod(parts[6]);
-        std::string member = parts[8];
+        if (parts.size() != 4) {
+            return resp_error("wrong number of arguments");
+        }
 
-        if (g_kv_store.find(key) == g_kv_store.end()) {
+        const std::string& key = parts[1];
+        double score = 0;
+        try {
+            score = std::stod(parts[2]);
+        }
+        catch (...) {
+            return resp_error("value is not a valid float");
+        }
+
+        const std::string& member = parts[3];
+        auto it = g_kv_store.find(key);
+        if (it == g_kv_store.end()) {
             ValueEntry entry;
             entry.type = ValueType::ZSET;
-            g_kv_store[key] = entry;
+            auto result = g_kv_store.emplace(key, std::move(entry));
+            it = result.first;
         }
 
-        ValueEntry &entry = g_kv_store[key];     
-        if (entry.type != ValueType::ZSET) return "-WRONGTYPE Operation against Key\r\n";
+        ValueEntry& entry = it->second;
+        if (entry.type != ValueType::ZSET) {
+            return wrong_type();
+        }
 
         bool exists = false;
-        auto it = std::find_if(entry.zset_val.begin(), entry.zset_val.end(),
-                               [&member](const ZSetMember& m) { return m.member == member; });
+        auto existing = std::find_if(
+                entry.zset_val.begin(),
+                entry.zset_val.end(),
+                [&member](const ZSetMember& m) {
+                    return m.member == member;
+                }
+            );
 
-        if (it != entry.zset_val.end()) {
+        if (existing != entry.zset_val.end()) {
             exists = true;
-            if (it->score != score) {
-                entry.zset_val.erase(it);
+            if (existing->score != score) {
+                entry.zset_val.erase(existing);
                 entry.zset_val.insert({member, score});
             }
-        } else { entry.zset_val.insert({member, score}); }
-
-        return exists ? ":0\r\n" : ":1\r\n";;
-    }
-
-    else if (command == "ZRANK") {
-        if (parts.size() < 5) return "-ERR wrong number of arguments\r\n";
-        std::string key = parts[4];
-        std::string target_member = parts[6];
-        if (g_kv_store.find(key) == g_kv_store.end()) return "$-1\r\n";
-
-        ValueEntry &entry = g_kv_store[key];
-        if (entry.type != ValueType::ZSET) return "-WRONGTYPE Operation against Key\r\n";
-
-        int rank = 0;
-        bool found = false;
-        for (const auto& m : entry.zset_val) {
-            if (m.member == target_member) {
-                found = true; break;
-            } rank++;
         }
 
-        if (found) {
-            return ":" + std::to_string(rank) + "\r\n";
-        } else { return "$-1\r\n"; }
-    }
-
-    else if (command == "ZRANGE") {
-        if (parts.size() < 7) return "-ERR wrong number of arguments\r\n";
-        std::string key = parts[4];
-        long long start = std::stoll(parts[6]);
-        long long stop = std::stoll(parts[8]);
-
-        if (g_kv_store.find(key) == g_kv_store.end()) return "*0\r\n";
-        ValueEntry &entry = g_kv_store[key];
-        if (entry.type != ValueType::ZSET) return "-WRONGTYPE Operation against Key\r\n";
-
-        long long set_size = (long long)entry.zset_val.size();
-        if (start < 0) {
-            start = set_size + start;
-            if (start < 0) start = 0;
+        else {
+            entry.zset_val.insert({member, score});
         }
-        if (stop < 0) stop = set_size + stop;
-        if (start >= set_size || start > stop) return "*0\r\n";
-        if (stop >= set_size) stop = set_size - 1;
 
-        std::vector<std::string> result_members;
-        auto it = entry.zset_val.begin();
-        std::advance(it, (size_t)start);
-        for (long long i = start; i <= stop && it != entry.zset_val.end(); ++i) {
-            result_members.push_back(it->member);
-            ++it;
-        }
-        std::string resp = "*" + std::to_string(result_members.size()) + "\r\n";
-        for (const auto& member : result_members) {
-            resp += "$" + std::to_string(member.length()) + "\r\n" + member + "\r\n";
-        }
-        return resp;
+        return resp_integer(exists ? 0 : 1);
     }
 
     else if (command == "ZCARD") {
-        if (parts.size() < 5) return "-ERR wrong number of arguments\r\n";
-        std::string key = parts[4];
+        if (parts.size() != 2) {
+            return resp_error("wrong number of arguments");
+        }
 
-        if (g_kv_store.find(key) == g_kv_store.end()) return ":0\r\n";
-        ValueEntry &entry = g_kv_store[key];
-        if (entry.type != ValueType::ZSET) return "-WRONGTYPE Operation against Key\r\n";
-        return ":" + std::to_string(entry.zset_val.size()) + "\r\n";
+        const std::string& key = parts[1];
+        auto it = g_kv_store.find(key);
+        if (it == g_kv_store.end()) {
+            return resp_integer(0);
+        }
+
+        ValueEntry& entry = it->second;
+        if (entry.type != ValueType::ZSET) {
+            return wrong_type();
+        }
+
+        return resp_integer(static_cast<long long>(entry.zset_val.size()));
+    }
+
+    else if (command == "ZRANK") {
+        if (parts.size() != 3) {
+            return resp_error("wrong number of arguments");
+        }
+
+        const std::string& key = parts[1];
+        const std::string& target_member = parts[2];
+        auto it = g_kv_store.find(key);
+
+        if (it == g_kv_store.end()) {
+            return resp_null();
+        }
+
+        ValueEntry& entry = it->second;
+        if (entry.type != ValueType::ZSET) {
+            return wrong_type();
+        }
+
+        long long rank = 0;
+        for (const auto& member : entry.zset_val) {
+            if (member.member == target_member) {
+                return resp_integer(rank);
+            }
+            ++rank;
+        }
+
+        return resp_null();
+    }
+
+    else if (command == "ZRANGE") {
+        if (parts.size() != 4) {
+            return resp_error("wrong number of arguments");
+        }
+
+        const std::string& key = parts[1];
+        auto it = g_kv_store.find(key);
+        if (it == g_kv_store.end()) {
+            return resp_array({});
+        }
+
+        ValueEntry& entry = it->second;
+        if (entry.type != ValueType::ZSET) {
+            return wrong_type();
+        }
+
+        long long start;
+        long long stop;
+        try {
+            start = std::stoll(parts[2]);
+            stop = std::stoll(parts[3]);
+        }
+        catch (...) {
+            return resp_error("value is not an integer or out of range");
+        }
+
+        long long set_size = static_cast<long long>(entry.zset_val.size());
+        if (start < 0) {
+            start = set_size + start;
+        }
+        if (stop < 0) {
+            stop = set_size + stop;
+        }
+        if (start < 0) {
+            start = 0;
+        }
+        if (stop >= set_size) {
+            stop = set_size - 1;
+        }
+        if (
+            start > stop ||
+            start >= set_size
+        ) {
+            return resp_array({});
+        }
+        std::vector<std::string> values;
+        auto zset_it = entry.zset_val.begin();
+        std::advance(zset_it, static_cast<size_t>(start));
+
+        for (
+            long long i = start;
+            i <= stop &&
+            zset_it != entry.zset_val.end();
+            ++i,
+            ++zset_it) {
+            values.push_back(zset_it->member);
+        }
+        return resp_array(values);
     }
 
     else if (command == "ZSCORE") {
-        if (parts.size() < 7) return "-ERR wrong number of arguments\r\n";
-        std::string key = parts[4];
-        std::string target_member = parts[6];
-        if (g_kv_store.find(key) == g_kv_store.end()) return "$-1\r\n";
+        if (parts.size() != 3) {
+            return resp_error("wrong number of arguments");
+        }
 
-        ValueEntry &entry = g_kv_store[key];
-        if (entry.type != ValueType::ZSET) return "-WRONGTYPE Operation against Key\r\n";
+        const std::string& key = parts[1];
+        const std::string& target_member = parts[2];
+        auto it = g_kv_store.find(key);
+        if (it == g_kv_store.end()) {
+            return resp_null();
+        }
 
-        auto it = std::find_if(entry.zset_val.begin(), entry.zset_val.end(),
-                               [&target_member](const ZSetMember& m) {
-                                   return m.member == target_member;
-                               });
+        ValueEntry& entry = it->second;
+        if (entry.type != ValueType::ZSET) {
+            return wrong_type();
+        }
 
-        if (it != entry.zset_val.end()) {
-            std::ostringstream oss;
-            oss << std::setprecision(17) << it->score;
-            std::string score_str = oss.str();
-            return "$" + std::to_string(score_str.length()) + "\r\n" + score_str + "\r\n";
-        } else { return "$-1\r\n"; }
+        auto member_it = std::find_if(
+                entry.zset_val.begin(),
+                entry.zset_val.end(),
+                [&target_member](
+                    const ZSetMember& m
+                ) {
+                    return m.member == target_member;
+                }
+            );
+
+        if (member_it == entry.zset_val.end()) {
+            return resp_null();
+        }
+
+        std::ostringstream oss;
+        oss << std::setprecision(17) << member_it->score;
+        return resp_bulk_string(oss.str());
     }
 
     else if (command == "ZREM") {
-        if (parts.size() < 7) return "-ERR wrong number of arguments\r\n";
-        std::string key = parts[4];
-        std::string target_member = parts[6];
-        if (g_kv_store.find(key) == g_kv_store.end()) return ":0\r\n";
-
-        ValueEntry &entry = g_kv_store[key];
-        if (entry.type != ValueType::ZSET) return "-WRONGTYPE Operation against Key\r\n";
-
-        auto it = std::find_if(entry.zset_val.begin(), entry.zset_val.end(),
-                               [&target_member](const ZSetMember& m) {
-                                   return m.member == target_member;
-                               });
-
-        if (it != entry.zset_val.end()) {
-            entry.zset_val.erase(it);
-            return ":1\r\n";
+        const std::string& key = parts[1];
+        const std::string& target_member = parts[2];
+        auto it = g_kv_store.find(key);
+        if (it == g_kv_store.end()) {
+            return resp_integer(0);
         }
 
-        return ":0\r\n";
+        ValueEntry& entry = it->second;
+        if (entry.type != ValueType::ZSET) {
+            return wrong_type();
+        }
+
+        auto member_it = std::find_if(
+                entry.zset_val.begin(),
+                entry.zset_val.end(),
+                [&target_member](
+                    const ZSetMember& m
+                ) {
+                    return m.member == target_member;
+                }
+            );
+
+        if (member_it == entry.zset_val.end()) {
+            return resp_integer(0);
+        }
+
+        entry.zset_val.erase(member_it);
+        return resp_integer(1);
     }
 
     else if (command == "TYPE") {
-        if (parts.size() < 5) return "-ERR wrong number of arguments\r\n";
-        std::string key = parts[4];
-        if (g_kv_store.find(key) == g_kv_store.end()) return "+none\r\n";
-        ValueEntry &entry = g_kv_store[key];
+        if (parts.size() != 2) {
+            return resp_error("wrong number of arguments");
+        }
 
-        switch (entry.type) {
+        const std::string& key = parts[1];
+        auto it = g_kv_store.find(key);
+        if (it == g_kv_store.end()) {
+            return resp_simple_string("none");
+        }
+
+        switch (it->second.type) {
             case ValueType::STRING:
-                return "+string\r\n";
+                return resp_simple_string("string");
             case ValueType::LIST:
-                return "+list\r\n";
+                return resp_simple_string("list");
             case ValueType::ZSET:
-                return "+zset\r\n";
+                return resp_simple_string("zset");
             default:
-                return "+none\r\n";
+                return resp_simple_string("none");
         }
     }
 
-    return "-ERR unknown command\r\n";
+    return resp_error("unknown command");
 }

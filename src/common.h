@@ -11,6 +11,7 @@
 struct RedisConfig {
     int port = 6379;
 };
+
 extern RedisConfig g_config;
 
 enum class ValueType {STRING, LIST, ZSET};
@@ -34,6 +35,7 @@ struct ValueEntry {
     std::chrono::time_point<std::chrono::steady_clock> expiry_time;
     bool has_expiry = false;
 };
+
 extern std::unordered_map<std::string, ValueEntry> g_kv_store;
 
 enum class ParseResultType {COMPLETE, INCOMPLETE, ERROR};
@@ -58,13 +60,17 @@ struct Client {
     RespParser parser;
 };
 
-std::string dispatch_command(
-    const std::vector<std::string>& parts
-);
+std::string resp_simple_string(const std::string& value);
+std::string resp_error(const std::string& value);
+std::string resp_bulk_string(const std::string& value);
+std::string resp_null();
+std::string resp_integer(long long value);
+std::string resp_array(const std::vector<std::string>& values);
+
+std::string dispatch_command(const std::vector<std::string>& parts);
 
 void handle_read(Client& client);
 void handle_write(Client& client);
-
 ParseResult parse_resp(Client& client);
 
 #endif
