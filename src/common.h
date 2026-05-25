@@ -6,6 +6,7 @@
 #include <chrono>
 #include <vector>
 #include <set>
+#include <functional>
 #include <cstddef>
 
 struct RedisConfig {
@@ -67,10 +68,71 @@ std::string resp_null();
 std::string resp_integer(long long value);
 std::string resp_array(const std::vector<std::string>& values);
 
+using CommandHandler = std::function<std::string(const std::vector<std::string>&)>;
 std::string dispatch_command(const std::vector<std::string>& parts);
 
 void handle_read(Client& client);
 void handle_write(Client& client);
 ParseResult parse_resp(Client& client);
+
+std::string db_set(
+    const std::vector<std::string>& parts
+);
+
+std::string db_get(
+    const std::vector<std::string>& parts
+);
+
+std::string db_rpush(
+    const std::vector<std::string>& parts
+);
+
+std::string db_lpush(
+    const std::vector<std::string>& parts
+);
+
+std::string db_lpop(
+    const std::vector<std::string>& parts
+);
+
+std::string db_llen(
+    const std::vector<std::string>& parts
+);
+
+std::string db_lrange(
+    const std::vector<std::string>& parts
+);
+
+std::string db_incr(
+    const std::vector<std::string>& parts
+);
+
+std::string db_zadd(
+    const std::vector<std::string>& parts
+);
+
+std::string db_zcard(
+    const std::vector<std::string>& parts
+);
+
+std::string db_zrank(
+    const std::vector<std::string>& parts
+);
+
+std::string db_zrange(
+    const std::vector<std::string>& parts
+);
+
+std::string db_zscore(
+    const std::vector<std::string>& parts
+);
+
+std::string db_zrem(
+    const std::vector<std::string>& parts
+);
+
+std::string db_type(
+    const std::vector<std::string>& parts
+);
 
 #endif
