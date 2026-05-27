@@ -28,7 +28,12 @@ static const std::unordered_map<std::string, CommandHandler> command_registry = 
 
     {"SET", db_set},
     {"GET", db_get},
+    {"EXISTS", db_exists},
+    {"DEL", db_del},
     {"INCR", db_incr},
+    {"DECR", db_decr},
+    {"INCRBY", db_incrby},
+    {"DECRBY", db_decrby},    
     {"TYPE", db_type},
 
     {"RPUSH", db_rpush},

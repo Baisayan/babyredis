@@ -77,6 +77,141 @@ std::string db_incr(const std::vector<std::string>& parts) {
     }
 }
 
+std::string db_decr(const std::vector<std::string>& parts) {
+    if (parts.size() != 2) {
+        return resp_error("wrong number of arguments");
+    }
+
+    const std::string& key = parts[1];
+    auto it = g_kv_store.find(key);
+    if (it == g_kv_store.end()) {
+        ValueEntry entry;
+        entry.type = ValueType::STRING;
+        entry.value = "-1";
+        g_kv_store[key] = std::move(entry);
+        return resp_integer(-1);
+    }
+
+    ValueEntry& entry = it->second;
+    if (entry.type != ValueType::STRING) {
+        return wrong_type();
+    }
+
+    try {
+        long long value = std::stoll(entry.value);
+        --value;
+        entry.value = std::to_string(value);
+        return resp_integer(value);
+    }
+    catch (...) {
+        return resp_error("value is not an integer or out of range");
+    }
+}
+
+std::string db_incrby(const std::vector<std::string>& parts) {
+    if (parts.size() != 3) {
+        return resp_error("wrong number of arguments");
+    }
+    
+    long long increment = 0;
+    try {
+        increment = std::stoll(parts[2]);
+    }
+    catch (...) {
+        return resp_error("value is not an integer or out of range");
+    }
+
+    const std::string& key = parts[1];
+    auto it = g_kv_store.find(key);
+    if (it == g_kv_store.end()) {
+        ValueEntry entry;
+        entry.type = ValueType::STRING;
+        entry.value = std::to_string(increment);
+        g_kv_store[key] = std::move(entry);
+        return resp_integer(increment);
+    }
+
+    ValueEntry& entry = it->second;
+    if (entry.type != ValueType::STRING) {
+        return wrong_type();
+    }
+
+    try {
+        long long value = std::stoll(entry.value);
+        value += increment;
+        entry.value = std::to_string(value);
+        return resp_integer(value);
+    }
+    catch (...) {
+        return resp_error("value is not an integer or out of range");
+    }
+}
+
+std::string db_decrby(const std::vector<std::string>& parts) {
+    if (parts.size() != 3) {
+        return resp_error("wrong number of arguments");
+    }
+
+    long long decrement = 0;
+    try {
+        decrement = std::stoll(parts[2]);
+    }
+    catch (...) {
+        return resp_error("value is not an integer or out of range");
+    }
+
+    const std::string& key = parts[1];
+    auto it = g_kv_store.find(key);
+    if (it == g_kv_store.end()) {
+        ValueEntry entry;
+        entry.type = ValueType::STRING;
+        entry.value = std::to_string(-decrement);
+        g_kv_store[key] = std::move(entry);
+        return resp_integer(-decrement);
+    }
+
+    ValueEntry& entry = it->second;
+    if (entry.type != ValueType::STRING) {
+        return wrong_type();
+    }
+
+    try {
+        long long value = std::stoll(entry.value);
+        value -= decrement;
+        entry.value = std::to_string(value);
+        return resp_integer(value);
+    }
+    catch (...) {
+        return resp_error("value is not an integer or out of range");
+    }
+}
+
+std::string db_exists(const std::vector<std::string>& parts) {
+    if (parts.size() < 2) {
+        return resp_error("wrong number of arguments");
+    }
+
+    long long count = 0;
+    for (size_t i = 1; i < parts.size(); ++i) {
+        if (g_kv_store.find(parts[i]) != g_kv_store.end()) {
+            ++count;
+        }
+    }
+    return resp_integer(count);
+}
+
+std::string db_del(const std::vector<std::string>& parts) {
+    if (parts.size() < 2) {
+        return resp_error("wrong number of arguments");
+    }
+
+    long long deleted = 0;
+    for (size_t i = 1; i < parts.size(); ++i) {
+        deleted += static_cast<long long>(g_kv_store.erase(parts[i]));
+    }
+    return resp_integer(deleted);
+}
+
 std::string db_type(const std::vector<std::string>& parts) {
     if (parts.size() != 2) {
         return resp_error("wrong number of arguments");
