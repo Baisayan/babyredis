@@ -1,0 +1,42 @@
+#pragma once
+#include <string>
+#include <vector>
+#include <cstddef>
+
+enum class ParseResultType {
+    COMPLETE,
+    INCOMPLETE,
+    ERROR
+};
+
+struct ParseResult {
+    ParseResultType type;
+    std::vector<std::string> command;
+    std::string error;
+};
+
+struct RespParser {
+    size_t pos = 0;
+    int expected_args = -1;
+    std::vector<std::string> args;
+};
+
+struct Client {
+    int fd;
+    std::string input_buffer;
+    std::string output_buffer;
+    bool closed = false;
+    RespParser parser;
+};
+
+std::string resp_simple_string(const std::string& value);
+std::string resp_error(const std::string& value);
+std::string resp_bulk_string(const std::string& value);
+std::string resp_null();
+std::string resp_integer(long long value);
+std::string resp_array(const std::vector<std::string>& values);
+
+ParseResult parse_resp(Client& client);
+
+void handle_read(Client& client);
+void handle_write(Client& client);

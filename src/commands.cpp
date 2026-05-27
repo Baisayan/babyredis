@@ -1,6 +1,6 @@
-#include <algorithm>
-#include <unordered_map>
-#include "common.h"
+#include "commands.h"
+#include "resp.h"
+#include "db.h"
 
 static std::string handle_ping(const std::vector<std::string>& parts) {
     if (parts.size() == 1) {
@@ -33,9 +33,11 @@ static const std::unordered_map<std::string, CommandHandler> command_registry = 
 
     {"RPUSH", db_rpush},
     {"LPUSH", db_lpush},
+    {"RPOP", db_rpop},
     {"LPOP", db_lpop},
     {"LLEN", db_llen},
     {"LRANGE", db_lrange},
+    {"LINDEX", db_lindex},
 
     {"ZADD", db_zadd},
     {"ZCARD", db_zcard},

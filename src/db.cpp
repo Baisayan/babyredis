@@ -2,7 +2,8 @@
 #include <iomanip>
 #include <sstream>
 
-#include "common.h"
+#include "db.h"
+#include "resp.h"
 
 std::unordered_map<std::string, ValueEntry> g_kv_store;
 
@@ -11,7 +12,7 @@ static inline std::string wrong_type() {
 }
 
 std::string db_set(const std::vector<std::string>& parts) {
-    if (parts.size() < 3) {
+    if (parts.size() != 3) {
         return resp_error("wrong number of arguments");
     }
 
@@ -20,34 +21,6 @@ std::string db_set(const std::vector<std::string>& parts) {
     ValueEntry entry;
     entry.type = ValueType::STRING;
     entry.value = value;
-
-    if (parts.size() == 5) {
-        std::string option = parts[3];
-        for (char& c : option) c = toupper(c);
-
-        if (option != "PX") {
-            return resp_error("syntax error");
-        }
-
-        try {
-            long long ttl_ms = std::stoll(parts[4]);
-            if (ttl_ms <= 0) {
-                return resp_error("invalid expire time");
-            }
-
-            entry.has_expiry = true;
-            entry.expiry_time =
-                std::chrono::steady_clock::now() +
-                std::chrono::milliseconds(ttl_ms);
-        }
-        catch (...) {
-            return resp_error("value is not an integer or out of range");
-        }
-    }
-
-    else if (parts.size() != 3) {
-        return resp_error("syntax error");
-    }
 
     g_kv_store[key] = std::move(entry);
     return resp_simple_string("OK");
@@ -60,6 +33,7 @@ std::string db_get(const std::vector<std::string>& parts) {
 
     const std::string& key = parts[1];
     auto it = g_kv_store.find(key);
+
     if (it == g_kv_store.end()) {
         return resp_null();
     }
@@ -67,11 +41,6 @@ std::string db_get(const std::vector<std::string>& parts) {
     ValueEntry& entry = it->second;
     if (entry.type != ValueType::STRING) {
         return wrong_type();
-    }
-
-    if (entry.has_expiry && std::chrono::steady_clock::now() >= entry.expiry_time) {
-        g_kv_store.erase(it);
-        return resp_null();
     }
 
     return resp_bulk_string(entry.value);
@@ -105,6 +74,29 @@ std::string db_incr(const std::vector<std::string>& parts) {
     }
     catch (...) {
         return resp_error("value is not an integer or out of range");
+    }
+}
+
+std::string db_type(const std::vector<std::string>& parts) {
+    if (parts.size() != 2) {
+        return resp_error("wrong number of arguments");
+    }
+
+    const std::string& key = parts[1];
+    auto it = g_kv_store.find(key);
+    if (it == g_kv_store.end()) {
+        return resp_simple_string("none");
+    }
+
+    switch (it->second.type) {
+        case ValueType::STRING:
+            return resp_simple_string("string");
+        case ValueType::LIST:
+            return resp_simple_string("list");
+        case ValueType::ZSET:
+            return resp_simple_string("zset");
+        default:
+            return resp_simple_string("none");
     }
 }
 
@@ -154,7 +146,7 @@ std::string db_lpush(const std::vector<std::string>& parts) {
     }
 
     for (size_t i = 2; i < parts.size(); ++i) {
-        entry.list_val.insert(entry.list_val.begin(), parts[i]);
+        entry.list_val.push_front(parts[i]);
     }
 
     return resp_integer(static_cast<long long>(entry.list_val.size()));
@@ -182,7 +174,7 @@ std::string db_lpop(const std::vector<std::string>& parts) {
 
     if (parts.size() == 2) {
         std::string value = std::move(entry.list_val.front());
-        entry.list_val.erase(entry.list_val.begin());
+        entry.list_val.pop_front();
         return resp_bulk_string(value);
     }
 
@@ -199,10 +191,11 @@ std::string db_lpop(const std::vector<std::string>& parts) {
 
     size_t pop_count = std::min(static_cast<size_t>(count), entry.list_val.size());
     std::vector<std::string> values;
+    values.reserve(pop_count);
 
     for (size_t i = 0; i < pop_count; ++i) {
         values.push_back(std::move(entry.list_val.front()));
-        entry.list_val.erase(entry.list_val.begin());
+        entry.list_val.pop_front();
     }
 
     return resp_array(values);
@@ -501,27 +494,4 @@ std::string db_zrem(const std::vector<std::string>& parts) {
 
     entry.zset_val.erase(member_it);
     return resp_integer(1);
-}
-
-std::string db_type(const std::vector<std::string>& parts) {
-    if (parts.size() != 2) {
-        return resp_error("wrong number of arguments");
-    }
-
-    const std::string& key = parts[1];
-    auto it = g_kv_store.find(key);
-    if (it == g_kv_store.end()) {
-        return resp_simple_string("none");
-    }
-
-    switch (it->second.type) {
-        case ValueType::STRING:
-            return resp_simple_string("string");
-        case ValueType::LIST:
-            return resp_simple_string("list");
-        case ValueType::ZSET:
-            return resp_simple_string("zset");
-        default:
-            return resp_simple_string("none");
-    }
 }
