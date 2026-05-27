@@ -30,7 +30,12 @@ extern std::unordered_map<std::string, ValueEntry> g_kv_store;
 // string operations
 std::string db_set(const std::vector<std::string>& parts);
 std::string db_get(const std::vector<std::string>& parts);
+std::string db_exists(const std::vector<std::string>& parts);
+std::string db_del(const std::vector<std::string>& parts);
 std::string db_incr(const std::vector<std::string>& parts);
+std::string db_decr(const std::vector<std::string>& parts);
+std::string db_incrby(const std::vector<std::string>& parts);
+std::string db_decrby(const std::vector<std::string>& parts);
 std::string db_type(const std::vector<std::string>& parts);
 
 // list operations

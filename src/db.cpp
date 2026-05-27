@@ -153,7 +153,7 @@ std::string db_lpush(const std::vector<std::string>& parts) {
 }
 
 std::string db_lpop(const std::vector<std::string>& parts) {
-    if (parts.size() != 2 && parts.size() != 3) {
+    if (parts.size() != 2) {
         return resp_error("wrong number of arguments");
     }
 
@@ -172,33 +172,33 @@ std::string db_lpop(const std::vector<std::string>& parts) {
         return resp_null();
     }
 
-    if (parts.size() == 2) {
-        std::string value = std::move(entry.list_val.front());
-        entry.list_val.pop_front();
-        return resp_bulk_string(value);
+    std::string value = std::move(entry.list_val.front());
+    entry.list_val.pop_front();
+    return resp_bulk_string(value);
+}
+
+std::string db_rpop(const std::vector<std::string>& parts) {
+    if (parts.size() != 2) {
+        return resp_error("wrong number of arguments");
     }
 
-    long long count = 0;
-    try {
-        count = std::stoll(parts[2]);
-        if (count < 0) {
-            return resp_error("value is out of range");
-        }
-    }
-    catch (...) {
-        return resp_error("value is not an integer or out of range");
+    const std::string& key = parts[1];
+    auto it = g_kv_store.find(key);
+    if (it == g_kv_store.end()) {
+        return resp_null();
     }
 
-    size_t pop_count = std::min(static_cast<size_t>(count), entry.list_val.size());
-    std::vector<std::string> values;
-    values.reserve(pop_count);
-
-    for (size_t i = 0; i < pop_count; ++i) {
-        values.push_back(std::move(entry.list_val.front()));
-        entry.list_val.pop_front();
+    ValueEntry& entry = it->second;
+    if (entry.type != ValueType::LIST) {
+        return wrong_type();
+    }
+    if (entry.list_val.empty()) {
+        return resp_null();
     }
 
-    return resp_array(values);
+    std::string value = std::move(entry.list_val.back());
+    entry.list_val.pop_back();
+    return resp_bulk_string(value);
 }
 
 std::string db_llen(const std::vector<std::string>& parts) {
@@ -218,6 +218,40 @@ std::string db_llen(const std::vector<std::string>& parts) {
     }
 
     return resp_integer(static_cast<long long>(entry.list_val.size()));
+}
+
+std::string db_lindex(const std::vector<std::string>& parts) {
+    if (parts.size() != 3) {
+        return resp_error("wrong number of arguments");
+    }
+
+    const std::string& key = parts[1];
+    auto it = g_kv_store.find(key);
+    if (it == g_kv_store.end()) {
+        return resp_null();
+    }
+
+    ValueEntry& entry = it->second;
+    if (entry.type != ValueType::LIST) {
+        return wrong_type();
+    }
+
+    long long index = 0;
+    try {
+        index = std::stoll(parts[2]);
+    }
+    catch (...) {
+        return resp_error("value is not an integer or out of range");
+    }
+
+    long long size = static_cast<long long>(entry.list_val.size());
+    if (index < 0) {
+        index = size + index;
+    }
+    if (index < 0 || index >= size) {
+        return resp_null();
+    }
+    return resp_bulk_string(entry.list_val[index]);
 }
 
 std::string db_lrange(const std::vector<std::string>& parts) {
