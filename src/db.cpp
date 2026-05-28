@@ -1,7 +1,3 @@
-#include <algorithm>
-#include <iomanip>
-#include <sstream>
-
 #include "db.h"
 #include "resp.h"
 
@@ -16,13 +12,7 @@ std::string db_set(const std::vector<std::string>& parts) {
         return resp_error("wrong number of arguments");
     }
 
-    const std::string& key = parts[1];
-    const std::string& value = parts[2];
-    ValueEntry entry;
-    entry.type = ValueType::STRING;
-    entry.value = value;
-
-    g_kv_store[key] = std::move(entry);
+    g_kv_store[parts[1]] = ValueEntry{parts[2]};
     return resp_simple_string("OK");
 }
 
@@ -31,19 +21,16 @@ std::string db_get(const std::vector<std::string>& parts) {
         return resp_error("wrong number of arguments");
     }
 
-    const std::string& key = parts[1];
-    auto it = g_kv_store.find(key);
-
+    auto it = g_kv_store.find(parts[1]);
     if (it == g_kv_store.end()) {
         return resp_null();
     }
 
-    ValueEntry& entry = it->second;
-    if (entry.type != ValueType::STRING) {
-        return wrong_type();
+    if (auto* str_val = std::get_if<std::string>(&it->second.data)) {
+        return resp_bulk_string(*str_val);
     }
 
-    return resp_bulk_string(entry.value);
+    return wrong_type();
 }
 
 std::string db_incr(const std::vector<std::string>& parts) {
@@ -51,30 +38,24 @@ std::string db_incr(const std::vector<std::string>& parts) {
         return resp_error("wrong number of arguments");
     }
 
-    const std::string& key = parts[1];
-    auto it = g_kv_store.find(key);
+    auto it = g_kv_store.find(parts[1]);
     if (it == g_kv_store.end()) {
-        ValueEntry entry;
-        entry.type = ValueType::STRING;
-        entry.value = "1";
-        g_kv_store[key] = std::move(entry);
+        g_kv_store[parts[1]] = ValueEntry{std::string("1")};
         return resp_integer(1);
     }
 
-    ValueEntry& entry = it->second;
-    if (entry.type != ValueType::STRING) {
-        return wrong_type();
-    }
-
-    try {
-        long long value = std::stoll(entry.value);
-        ++value;
-        entry.value = std::to_string(value);
-        return resp_integer(value);
-    }
-    catch (...) {
-        return resp_error("value is not an integer or out of range");
-    }
+    if (auto* str_val = std::get_if<std::string>(&it->second.data)) {
+            try {
+                long long value = std::stoll(*str_val);
+                ++value;
+                *str_val = std::to_string(value);
+                return resp_integer(value);
+            }
+            catch (...) {
+                return resp_error("value is not an integer or out of range");
+            }
+        }
+    return wrong_type();
 }
 
 std::string db_decr(const std::vector<std::string>& parts) {
@@ -82,30 +63,24 @@ std::string db_decr(const std::vector<std::string>& parts) {
         return resp_error("wrong number of arguments");
     }
 
-    const std::string& key = parts[1];
-    auto it = g_kv_store.find(key);
+    auto it = g_kv_store.find(parts[1]);
     if (it == g_kv_store.end()) {
-        ValueEntry entry;
-        entry.type = ValueType::STRING;
-        entry.value = "-1";
-        g_kv_store[key] = std::move(entry);
+        g_kv_store[parts[1]] = ValueEntry{std::string("-1")};
         return resp_integer(-1);
     }
 
-    ValueEntry& entry = it->second;
-    if (entry.type != ValueType::STRING) {
-        return wrong_type();
+    if (auto* str_val = std::get_if<std::string>(&it->second.data)) {
+        try {
+            long long value = std::stoll(*str_val);
+            --value;
+            *str_val = std::to_string(value);
+            return resp_integer(value);
+        }
+        catch (...) {
+            return resp_error("value is not an integer or out of range");
+        }
     }
-
-    try {
-        long long value = std::stoll(entry.value);
-        --value;
-        entry.value = std::to_string(value);
-        return resp_integer(value);
-    }
-    catch (...) {
-        return resp_error("value is not an integer or out of range");
-    }
+    return wrong_type();
 }
 
 std::string db_incrby(const std::vector<std::string>& parts) {
@@ -114,37 +89,29 @@ std::string db_incrby(const std::vector<std::string>& parts) {
     }
     
     long long increment = 0;
-    try {
-        increment = std::stoll(parts[2]);
-    }
+    try { increment = std::stoll(parts[2]); }
     catch (...) {
         return resp_error("value is not an integer or out of range");
     }
 
-    const std::string& key = parts[1];
-    auto it = g_kv_store.find(key);
+    auto it = g_kv_store.find(parts[1]);
     if (it == g_kv_store.end()) {
-        ValueEntry entry;
-        entry.type = ValueType::STRING;
-        entry.value = std::to_string(increment);
-        g_kv_store[key] = std::move(entry);
+        g_kv_store[parts[1]] = ValueEntry{std::to_string(increment)};
         return resp_integer(increment);
     }
 
-    ValueEntry& entry = it->second;
-    if (entry.type != ValueType::STRING) {
-        return wrong_type();
+    if (auto* str_val = std::get_if<std::string>(&it->second.data)) {
+        try {
+            long long value = std::stoll(*str_val);
+            value += increment;
+            *str_val = std::to_string(value);
+            return resp_integer(value);
+        }
+        catch (...) {
+            return resp_error("value is not an integer or out of range");
+        }
     }
-
-    try {
-        long long value = std::stoll(entry.value);
-        value += increment;
-        entry.value = std::to_string(value);
-        return resp_integer(value);
-    }
-    catch (...) {
-        return resp_error("value is not an integer or out of range");
-    }
+    return wrong_type();
 }
 
 std::string db_decrby(const std::vector<std::string>& parts) {
@@ -153,37 +120,29 @@ std::string db_decrby(const std::vector<std::string>& parts) {
     }
 
     long long decrement = 0;
-    try {
-        decrement = std::stoll(parts[2]);
-    }
+    try { decrement = std::stoll(parts[2]); }
     catch (...) {
         return resp_error("value is not an integer or out of range");
     }
 
-    const std::string& key = parts[1];
-    auto it = g_kv_store.find(key);
+    auto it = g_kv_store.find(parts[1]);
     if (it == g_kv_store.end()) {
-        ValueEntry entry;
-        entry.type = ValueType::STRING;
-        entry.value = std::to_string(-decrement);
-        g_kv_store[key] = std::move(entry);
+        g_kv_store[parts[1]] = ValueEntry{std::to_string(-decrement)};
         return resp_integer(-decrement);
     }
 
-    ValueEntry& entry = it->second;
-    if (entry.type != ValueType::STRING) {
-        return wrong_type();
+    if (auto* str_val = std::get_if<std::string>(&it->second.data)) {
+        try {
+            long long value = std::stoll(*str_val);
+            value -= decrement;
+            *str_val = std::to_string(value);
+            return resp_integer(value);
+        }
+        catch (...) {
+            return resp_error("value is not an integer or out of range");
+        }
     }
-
-    try {
-        long long value = std::stoll(entry.value);
-        value -= decrement;
-        entry.value = std::to_string(value);
-        return resp_integer(value);
-    }
-    catch (...) {
-        return resp_error("value is not an integer or out of range");
-    }
+    return wrong_type();
 }
 
 std::string db_exists(const std::vector<std::string>& parts) {
@@ -217,22 +176,18 @@ std::string db_type(const std::vector<std::string>& parts) {
         return resp_error("wrong number of arguments");
     }
 
-    const std::string& key = parts[1];
-    auto it = g_kv_store.find(key);
+    auto it = g_kv_store.find(parts[1]);
     if (it == g_kv_store.end()) {
         return resp_simple_string("none");
     }
 
-    switch (it->second.type) {
-        case ValueType::STRING:
-            return resp_simple_string("string");
-        case ValueType::LIST:
-            return resp_simple_string("list");
-        case ValueType::ZSET:
-            return resp_simple_string("zset");
-        default:
-            return resp_simple_string("none");
-    }
+    const auto& data = it->second.data;
+    if (std::holds_alternative<std::string>(data)) return resp_simple_string("string");
+    if (std::holds_alternative<ListType>(data)) return resp_simple_string("list");
+    if (std::holds_alternative<SetType>(data)) return resp_simple_string("set");
+    if (std::holds_alternative<HashType>(data)) return resp_simple_string("hash");
+
+    return resp_simple_string("none");
 }
 
 std::string db_rpush(const std::vector<std::string>& parts) {
@@ -240,25 +195,19 @@ std::string db_rpush(const std::vector<std::string>& parts) {
         return resp_error("wrong number of arguments");
     }
 
-    const std::string& key = parts[1];
-    auto it = g_kv_store.find(key);
+    auto it = g_kv_store.find(parts[1]);
     if (it == g_kv_store.end()) {
-        ValueEntry entry;
-        entry.type = ValueType::LIST;
-        auto result = g_kv_store.emplace(key, std::move(entry));
+        auto result = g_kv_store.emplace(parts[1], ValueEntry{ListType{}});
         it = result.first;
     }
 
-    ValueEntry& entry = it->second;
-    if (entry.type != ValueType::LIST) {
-        return wrong_type();
+    if (auto* list_val = std::get_if<ListType>(&it->second.data)) {
+        for (size_t i = 2; i < parts.size(); ++i) {
+            list_val->push_back(parts[i]);
+        }
+        return resp_integer(static_cast<long long>(list_val->size()));
     }
-
-    for (size_t i = 2; i < parts.size(); ++i) {
-        entry.list_val.push_back(parts[i]);
-    }
-
-    return resp_integer(static_cast<long long>(entry.list_val.size()));
+    return wrong_type();
 }
 
 std::string db_lpush(const std::vector<std::string>& parts) {
@@ -266,25 +215,19 @@ std::string db_lpush(const std::vector<std::string>& parts) {
         return resp_error("wrong number of arguments");
     }
 
-    const std::string& key = parts[1];
-    auto it = g_kv_store.find(key);
+    auto it = g_kv_store.find(parts[1]);
     if (it == g_kv_store.end()) {
-        ValueEntry entry;
-        entry.type = ValueType::LIST;
-        auto result = g_kv_store.emplace(key, std::move(entry));
+        auto result = g_kv_store.emplace(parts[1], ValueEntry{ListType{}});
         it = result.first;
     }
 
-    ValueEntry& entry = it->second;
-    if (entry.type != ValueType::LIST) {
-        return wrong_type();
+    if (auto* list_val = std::get_if<ListType>(&it->second.data)) {
+        for (size_t i = 2; i < parts.size(); ++i) {
+            list_val->push_front(parts[i]);
+        }
+        return resp_integer(static_cast<long long>(list_val->size()));
     }
-
-    for (size_t i = 2; i < parts.size(); ++i) {
-        entry.list_val.push_front(parts[i]);
-    }
-
-    return resp_integer(static_cast<long long>(entry.list_val.size()));
+    return wrong_type();
 }
 
 std::string db_lpop(const std::vector<std::string>& parts) {
@@ -292,24 +235,17 @@ std::string db_lpop(const std::vector<std::string>& parts) {
         return resp_error("wrong number of arguments");
     }
 
-    const std::string& key = parts[1];
-    auto it = g_kv_store.find(key);
-    if (it == g_kv_store.end()) {
-        return resp_null();
-    }
+    auto it = g_kv_store.find(parts[1]);
+    if (it == g_kv_store.end()) return resp_null();
 
-    ValueEntry& entry = it->second;
-    if (entry.type != ValueType::LIST) {
-        return wrong_type();
-    }
+    if (auto* list_val = std::get_if<ListType>(&it->second.data)) {
+        if (list_val->empty()) return resp_null();
 
-    if (entry.list_val.empty()) {
-        return resp_null();
+        std::string value = std::move(list_val->front());
+        list_val->pop_front();
+        return resp_bulk_string(value);
     }
-
-    std::string value = std::move(entry.list_val.front());
-    entry.list_val.pop_front();
-    return resp_bulk_string(value);
+    return wrong_type();
 }
 
 std::string db_rpop(const std::vector<std::string>& parts) {
@@ -317,23 +253,17 @@ std::string db_rpop(const std::vector<std::string>& parts) {
         return resp_error("wrong number of arguments");
     }
 
-    const std::string& key = parts[1];
-    auto it = g_kv_store.find(key);
-    if (it == g_kv_store.end()) {
-        return resp_null();
-    }
+    auto it = g_kv_store.find(parts[1]);
+    if (it == g_kv_store.end()) return resp_null();
 
-    ValueEntry& entry = it->second;
-    if (entry.type != ValueType::LIST) {
-        return wrong_type();
-    }
-    if (entry.list_val.empty()) {
-        return resp_null();
-    }
+    if (auto* list_val = std::get_if<ListType>(&it->second.data)) {
+        if (list_val->empty()) return resp_null();
 
-    std::string value = std::move(entry.list_val.back());
-    entry.list_val.pop_back();
-    return resp_bulk_string(value);
+        std::string value = std::move(list_val->back());
+        list_val->pop_back();
+        return resp_bulk_string(value);
+    }
+    return wrong_type();
 }
 
 std::string db_llen(const std::vector<std::string>& parts) {
@@ -341,18 +271,13 @@ std::string db_llen(const std::vector<std::string>& parts) {
         return resp_error("wrong number of arguments");
     }
 
-    const std::string& key = parts[1];
-    auto it = g_kv_store.find(key);
-    if (it == g_kv_store.end()) {
-        return resp_integer(0);
-    }
+    auto it = g_kv_store.find(parts[1]);
+    if (it == g_kv_store.end()) return resp_integer(0);
 
-    ValueEntry& entry = it->second;
-    if (entry.type != ValueType::LIST) {
-        return wrong_type();
+    if (auto* list_val = std::get_if<ListType>(&it->second.data)) {
+        return resp_integer(static_cast<long long>(list_val->size()));
     }
-
-    return resp_integer(static_cast<long long>(entry.list_val.size()));
+    return wrong_type();
 }
 
 std::string db_lindex(const std::vector<std::string>& parts) {
@@ -360,33 +285,22 @@ std::string db_lindex(const std::vector<std::string>& parts) {
         return resp_error("wrong number of arguments");
     }
 
-    const std::string& key = parts[1];
-    auto it = g_kv_store.find(key);
-    if (it == g_kv_store.end()) {
-        return resp_null();
-    }
+    auto it = g_kv_store.find(parts[1]);
+    if (it == g_kv_store.end()) return resp_null();
 
-    ValueEntry& entry = it->second;
-    if (entry.type != ValueType::LIST) {
-        return wrong_type();
-    }
+    if (auto* list_val = std::get_if<ListType>(&it->second.data)) {
+        long long index = 0;
+        try { index = std::stoll(parts[2]); }
+        catch (...) {
+            return resp_error("value is not an integer or out of range");
+        }
 
-    long long index = 0;
-    try {
-        index = std::stoll(parts[2]);
+        long long size = static_cast<long long>(list_val->size());
+        if (index < 0) index = size + index;
+        if (index < 0 || index >= size) return resp_null();
+        return resp_bulk_string((*list_val)[index]);
     }
-    catch (...) {
-        return resp_error("value is not an integer or out of range");
-    }
-
-    long long size = static_cast<long long>(entry.list_val.size());
-    if (index < 0) {
-        index = size + index;
-    }
-    if (index < 0 || index >= size) {
-        return resp_null();
-    }
-    return resp_bulk_string(entry.list_val[index]);
+    return wrong_type();
 }
 
 std::string db_lrange(const std::vector<std::string>& parts) {
@@ -394,273 +308,260 @@ std::string db_lrange(const std::vector<std::string>& parts) {
         return resp_error("wrong number of arguments");
     }
 
-    const std::string& key = parts[1];
-    auto it = g_kv_store.find(key);
-    if (it == g_kv_store.end()) {
-        return resp_array({});
-    }
+    auto it = g_kv_store.find(parts[1]);
+    if (it == g_kv_store.end()) return resp_array({});
 
-    ValueEntry& entry = it->second;
-    if (entry.type != ValueType::LIST) {
-        return wrong_type();
-    }
+    if (auto* list_val = std::get_if<ListType>(&it->second.data)) {
+        long long start, stop;
+        try {
+            start = std::stoll(parts[2]);
+            stop = std::stoll(parts[3]);
+        }
+        catch (...) {
+            return resp_error("value is not an integer or out of range");
+        }
+    
+        long long list_size = static_cast<long long>(list_val->size());
+        if (start < 0) start = list_size + start;
+        if (stop < 0) stop = list_size + stop;
+        if (start < 0) start = 0;
+        if (stop >= list_size) stop = list_size - 1;
+        if (start > stop || start >= list_size) {
+            return resp_array({});
+        }
 
-    long long start;
-    long long stop;
-    try {
-        start = std::stoll(parts[2]);
-        stop = std::stoll(parts[3]);
+        std::vector<std::string> values;
+        for (long long i = start; i <= stop; ++i) {
+            values.push_back((*list_val)[i]);
+        }
+        return resp_array(values);
     }
-    catch (...) {
-        return resp_error("value is not an integer or out of range");
-    }
-
-    long long list_size = static_cast<long long>(entry.list_val.size());
-    if (start < 0) {
-        start = list_size + start;
-    }
-    if (stop < 0) {
-        stop = list_size + stop;
-    }
-    if (start < 0) {
-        start = 0;
-    }
-    if (stop >= list_size) {
-        stop = list_size - 1;
-    }
-    if (start > stop || start >= list_size) {
-        return resp_array({});
-    }
-
-    std::vector<std::string> values;
-    for (long long i = start; i <= stop; ++i) {
-        values.push_back(entry.list_val[i]);
-    }
-
-    return resp_array(values);
+    return wrong_type();
 }
 
-std::string db_zadd(const std::vector<std::string>& parts) {
-    if (parts.size() != 4) {
+std::string db_hset(const std::vector<std::string>& parts) {
+    if (parts.size() < 4 || parts.size() % 2 != 0) {
         return resp_error("wrong number of arguments");
     }
 
-    const std::string& key = parts[1];
-    double score = 0;
-    try {
-        score = std::stod(parts[2]);
-    }
-    catch (...) {
-        return resp_error("value is not a valid float");
-    }
-
-    const std::string& member = parts[3];
-    auto it = g_kv_store.find(key);
-
+    auto it = g_kv_store.find(parts[1]);
     if (it == g_kv_store.end()) {
-        ValueEntry entry;
-        entry.type = ValueType::ZSET;
-        auto result = g_kv_store.emplace(key, std::move(entry));
+        auto result = g_kv_store.emplace(parts[1], ValueEntry{HashType{}});
         it = result.first;
     }
 
-    ValueEntry& entry = it->second;
-    if (entry.type != ValueType::ZSET) {
-        return wrong_type();
-    }
-
-    bool exists = false;
-    auto existing =
-        std::find_if(
-            entry.zset_val.begin(),
-            entry.zset_val.end(),
-            [&member](const ZSetMember& m) {
-                return m.member == member;
+    if (auto* hash_val = std::get_if<HashType>(&it->second.data)) {
+        long long added = 0;
+        for (size_t i = 2; i < parts.size(); i += 2) {
+            if (hash_val->insert_or_assign(parts[i], parts[i+1]).second) {
+                added++;
             }
-        );
-
-    if (existing != entry.zset_val.end()) {
-        exists = true;
-        if (existing->score != score) {
-            entry.zset_val.erase(existing);
-            entry.zset_val.insert({member, score});
         }
+        return resp_integer(added);
     }
-    else {
-        entry.zset_val.insert({member, score});
-    }
-    return resp_integer(exists ? 0 : 1);
+    return wrong_type();
 }
 
-std::string db_zcard(const std::vector<std::string>& parts) {
+std::string db_hget(const std::vector<std::string>& parts) {
+    if (parts.size() != 3) {
+        return resp_error("wrong number of arguments");
+    }
+
+    auto it = g_kv_store.find(parts[1]);
+    if (it == g_kv_store.end()) return resp_null();
+
+    if (auto* hash_val = std::get_if<HashType>(&it->second.data)) {
+        auto field_it = hash_val->find(parts[2]);
+        if (field_it == hash_val->end()) return resp_null();
+        return resp_bulk_string(field_it->second);
+    }
+    return wrong_type();
+}
+
+std::string db_hdel(const std::vector<std::string>& parts) {
+    if (parts.size() < 3) {
+        return resp_error("wrong number of arguments");
+    }
+
+    auto it = g_kv_store.find(parts[1]);
+    if (it == g_kv_store.end()) return resp_integer(0);
+
+    if (auto* hash_val = std::get_if<HashType>(&it->second.data)) {
+        long long deleted = 0;
+        for (size_t i = 2; i < parts.size(); ++i) {
+            deleted += hash_val->erase(parts[i]);
+        }
+        return resp_integer(deleted);
+    }
+    return wrong_type();
+}
+
+std::string db_hexists(const std::vector<std::string>& parts) {
+    if (parts.size() != 3) {
+        return resp_error("wrong number of arguments");
+    }
+
+    auto it = g_kv_store.find(parts[1]);
+    if (it == g_kv_store.end()) return resp_integer(0);
+
+    if (auto* hash_val = std::get_if<HashType>(&it->second.data)) {
+        return resp_integer(hash_val->count(parts[2]));
+    }
+    return wrong_type();
+}
+
+std::string db_hlen(const std::vector<std::string>& parts) {
     if (parts.size() != 2) {
         return resp_error("wrong number of arguments");
     }
 
-    const std::string& key = parts[1];
-    auto it = g_kv_store.find(key);
-    if (it == g_kv_store.end()) {
-        return resp_integer(0);
-    }
+    auto it = g_kv_store.find(parts[1]);
+    if (it == g_kv_store.end()) return resp_integer(0);
 
-    ValueEntry& entry = it->second;
-    if (entry.type != ValueType::ZSET) {
-        return wrong_type();
+    if (auto* hash_val = std::get_if<HashType>(&it->second.data)) {
+        return resp_integer(static_cast<long long>(hash_val->size()));
     }
-
-    return resp_integer(static_cast<long long>(entry.zset_val.size()));
+    return wrong_type();
 }
 
-std::string db_zrank(const std::vector<std::string>& parts) {
-    if (parts.size() != 3) {
+std::string db_hkeys(const std::vector<std::string>& parts) {
+    if (parts.size() != 2) {
         return resp_error("wrong number of arguments");
     }
 
-    const std::string& key = parts[1];
-    const std::string& target_member = parts[2];
-    auto it = g_kv_store.find(key);
-    if (it == g_kv_store.end()) {
-        return resp_null();
-    }
+    auto it = g_kv_store.find(parts[1]);
+    if (it == g_kv_store.end()) return resp_array({});
 
-    ValueEntry& entry = it->second;
-    if (entry.type != ValueType::ZSET) {
-        return wrong_type();
-    }
-
-    long long rank = 0;
-    for (const auto& member : entry.zset_val) {
-        if (member.member == target_member) {
-            return resp_integer(rank);
+    if (auto* hash_val = std::get_if<HashType>(&it->second.data)) {
+        std::vector<std::string> keys;
+        for (const auto& kv : *hash_val) {
+            keys.push_back(kv.first);
         }
-        ++rank;
+        return resp_array(keys);
     }
-
-    return resp_null();
+    return wrong_type();
 }
 
-std::string db_zrange(const std::vector<std::string>& parts) {
-    if (parts.size() != 4) {
+std::string db_hvals(const std::vector<std::string>& parts) {
+    if (parts.size() != 2) {
         return resp_error("wrong number of arguments");
     }
 
-    const std::string& key = parts[1];
-    auto it = g_kv_store.find(key);
-    if (it == g_kv_store.end()) {
-        return resp_array({});
-    }
+    auto it = g_kv_store.find(parts[1]);
+    if (it == g_kv_store.end()) return resp_array({});
 
-    ValueEntry& entry = it->second;
-    if (entry.type != ValueType::ZSET) {
-        return wrong_type();
+    if (auto* hash_val = std::get_if<HashType>(&it->second.data)) {
+        std::vector<std::string> vals;
+        for (const auto& kv : *hash_val) {
+            vals.push_back(kv.second);
+        }
+        return resp_array(vals);
     }
-
-    long long start;
-    long long stop;
-    try {
-        start = std::stoll(parts[2]);
-        stop = std::stoll(parts[3]);
-    }
-    catch (...) {
-        return resp_error("value is not an integer or out of range");
-    }
-
-    long long set_size = static_cast<long long>(entry.zset_val.size());
-    if (start < 0) {
-        start = set_size + start;
-    }
-    if (stop < 0) {
-        stop = set_size + stop;
-    }
-    if (start < 0) {
-        start = 0;
-    }
-    if (stop >= set_size) {
-        stop = set_size - 1;
-    }
-    if (start > stop || start >= set_size) {
-        return resp_array({});
-    }
-
-    std::vector<std::string> values;
-    auto zset_it = entry.zset_val.begin();
-    std::advance(zset_it, static_cast<size_t>(start));
-
-    for (
-        long long i = start;
-        i <= stop && zset_it != entry.zset_val.end();
-        ++i, ++zset_it
-    ) {
-        values.push_back(zset_it->member);
-    }
-
-    return resp_array(values);
+    return wrong_type();
 }
 
-std::string db_zscore(const std::vector<std::string>& parts) {
+std::string db_hgetall(const std::vector<std::string>& parts) {
+    if (parts.size() != 2) {
+        return resp_error("wrong number of arguments");
+    }
+
+    auto it = g_kv_store.find(parts[1]);
+    if (it == g_kv_store.end()) return resp_array({});
+
+    if (auto* hash_val = std::get_if<HashType>(&it->second.data)) {
+        std::vector<std::string> result;
+        for (const auto& kv : *hash_val) {
+            result.push_back(kv.first);
+            result.push_back(kv.second);
+        }
+        return resp_array(result);
+    }
+    return wrong_type();
+}
+
+std::string db_sadd(const std::vector<std::string>& parts) {
+    if (parts.size() < 3) {
+        return resp_error("wrong number of arguments");
+    }
+
+    auto it = g_kv_store.find(parts[1]);
+    if (it == g_kv_store.end()) {
+        auto result = g_kv_store.emplace(parts[1], ValueEntry{SetType{}});
+        it = result.first;
+    }
+
+    if (auto* set_val = std::get_if<SetType>(&it->second.data)) {
+        long long added = 0;
+        for (size_t i = 2; i < parts.size(); ++i) {
+            if (set_val->insert(parts[i]).second) {
+                added++;
+            }
+        }
+        return resp_integer(added);
+    }
+    return wrong_type();
+}
+
+std::string db_srem(const std::vector<std::string>& parts) {
+    if (parts.size() < 3) {
+        return resp_error("wrong number of arguments");
+    }
+
+    auto it = g_kv_store.find(parts[1]);
+    if (it == g_kv_store.end()) return resp_integer(0);
+
+    if (auto* set_val = std::get_if<SetType>(&it->second.data)) {
+        long long removed = 0;
+        for (size_t i = 2; i < parts.size(); ++i) {
+            removed += set_val->erase(parts[i]);
+        }
+        return resp_integer(removed);
+    }
+    return wrong_type();
+}
+
+std::string db_scard(const std::vector<std::string>& parts) {
+    if (parts.size() != 2) {
+        return resp_error("wrong number of arguments");
+    }
+
+    auto it = g_kv_store.find(parts[1]);
+    if (it == g_kv_store.end()) return resp_integer(0);
+
+    if (auto* set_val = std::get_if<SetType>(&it->second.data)) {
+        return resp_integer(static_cast<long long>(set_val->size()));
+    }
+    return wrong_type();
+}
+
+std::string db_smembers(const std::vector<std::string>& parts) {
+    if (parts.size() != 2) {
+        return resp_error("wrong number of arguments");
+    }
+
+    auto it = g_kv_store.find(parts[1]);
+    if (it == g_kv_store.end()) return resp_array({});
+
+    if (auto* set_val = std::get_if<SetType>(&it->second.data)) {
+        std::vector<std::string> members;
+        for (const auto& member : *set_val) {
+            members.push_back(member);
+        }
+        return resp_array(members);
+    }
+    return wrong_type();
+}
+
+std::string db_sismember(const std::vector<std::string>& parts) {
     if (parts.size() != 3) {
         return resp_error("wrong number of arguments");
     }
 
-    const std::string& key = parts[1];
-    const std::string& target_member = parts[2];
-    auto it = g_kv_store.find(key);
-    if (it == g_kv_store.end()) {
-        return resp_null();
+    auto it = g_kv_store.find(parts[1]);
+    if (it == g_kv_store.end()) return resp_integer(0);
+
+    if (auto* set_val = std::get_if<SetType>(&it->second.data)) {
+        return resp_integer(set_val->count(parts[2]));
     }
-
-    ValueEntry& entry = it->second;
-    if (entry.type != ValueType::ZSET) {
-        return wrong_type();
-    }
-
-    auto member_it =
-        std::find_if(
-            entry.zset_val.begin(),
-            entry.zset_val.end(),
-            [&target_member](const ZSetMember& m) {
-                return m.member == target_member;
-            }
-        );
-
-    if (member_it == entry.zset_val.end()) {
-        return resp_null();
-    }
-
-    std::ostringstream oss;
-    oss << std::setprecision(17) << member_it->score;
-    return resp_bulk_string(oss.str());
-}
-
-std::string db_zrem(const std::vector<std::string>& parts) {
-    if (parts.size() != 3) {
-        return resp_error("wrong number of arguments");
-    }
-
-    const std::string& key = parts[1];
-    const std::string& target_member = parts[2];
-    auto it = g_kv_store.find(key);
-    if (it == g_kv_store.end()) {
-        return resp_integer(0);
-    }
-
-    ValueEntry& entry = it->second;
-    if (entry.type != ValueType::ZSET) {
-        return wrong_type();
-    }
-
-    auto member_it = std::find_if(
-            entry.zset_val.begin(),
-            entry.zset_val.end(),
-            [&target_member](const ZSetMember& m) {
-                return m.member == target_member;
-            }
-        );
-
-    if (member_it == entry.zset_val.end()) {
-        return resp_integer(0);
-    }
-
-    entry.zset_val.erase(member_it);
-    return resp_integer(1);
+    return wrong_type();
 }

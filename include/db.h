@@ -1,31 +1,18 @@
 #pragma once
 #include <string>
-#include <unordered_map>
 #include <vector>
 #include <deque>
-#include <set>
+#include <unordered_set>
+#include <unordered_map>
+#include <variant>
 
-enum class ValueType {STRING, LIST, ZSET};
-
-struct ZSetMember {
-    std::string member;
-    double score;
-    bool operator<(const ZSetMember& other) const {
-        if (score != other.score) {
-            return score < other.score;
-        }
-        return member < other.member;
-    }
-};
+using ListType = std::deque<std::string>;
+using SetType = std::unordered_set<std::string>;
+using HashType = std::unordered_map<std::string, std::string>;
 
 struct ValueEntry {
-    ValueType type = ValueType::STRING;
-    std::string value;
-    std::deque<std::string> list_val;
-    std::set<ZSetMember> zset_val;
+    std::variant<std::string, ListType, SetType, HashType> data;
 };
-
-extern std::unordered_map<std::string, ValueEntry> g_kv_store;
 
 // string operations
 std::string db_set(const std::vector<std::string>& parts);
@@ -47,10 +34,19 @@ std::string db_llen(const std::vector<std::string>& parts);
 std::string db_lrange(const std::vector<std::string>& parts);
 std::string db_lindex(const std::vector<std::string>& parts);
 
-// sorted set operations
-std::string db_zadd(const std::vector<std::string>& parts);
-std::string db_zcard(const std::vector<std::string>& parts);
-std::string db_zrank(const std::vector<std::string>& parts);
-std::string db_zrange(const std::vector<std::string>& parts);
-std::string db_zscore(const std::vector<std::string>& parts);
-std::string db_zrem(const std::vector<std::string>& parts);
+// hash operations
+std::string db_hset(const std::vector<std::string>& parts);
+std::string db_hget(const std::vector<std::string>& parts);
+std::string db_hdel(const std::vector<std::string>& parts);
+std::string db_hkeys(const std::vector<std::string>& parts);
+std::string db_hvals(const std::vector<std::string>& parts);
+std::string db_hgetall(const std::vector<std::string>& parts);
+std::string db_hexists(const std::vector<std::string>& parts);
+std::string db_hlen(const std::vector<std::string>& parts);
+
+// set operations
+std::string db_sadd(const std::vector<std::string>& parts);
+std::string db_srem(const std::vector<std::string>& parts);
+std::string db_scard(const std::vector<std::string>& parts);
+std::string db_smembers(const std::vector<std::string>& parts);
+std::string db_sismember(const std::vector<std::string>& parts);

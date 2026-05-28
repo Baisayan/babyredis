@@ -44,12 +44,20 @@ static const std::unordered_map<std::string, CommandHandler> command_registry = 
     {"LRANGE", db_lrange},
     {"LINDEX", db_lindex},
 
-    {"ZADD", db_zadd},
-    {"ZCARD", db_zcard},
-    {"ZRANK", db_zrank},
-    {"ZRANGE", db_zrange},
-    {"ZSCORE", db_zscore},
-    {"ZREM", db_zrem}
+    {"HSET", db_hset},
+    {"HGET", db_hget},
+    {"HDEL", db_hdel},
+    {"HKEYS", db_hkeys},
+    {"HVALS", db_hvals},
+    {"HEXISTS", db_hexists},
+    {"HLEN", db_hlen},
+    {"HGETALL", db_hgetall},
+
+    {"SADD", db_sadd},
+    {"SREM", db_srem},
+    {"SCARD", db_scard},
+    {"SMEMBERS", db_smembers},
+    {"SISMEMBER", db_sismember},
 };
 
 std::string dispatch_command(const std::vector<std::string>& parts) {
