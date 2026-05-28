@@ -1,28 +1,26 @@
 #include "db.h"
 #include "resp.h"
 
-std::unordered_map<std::string, ValueEntry> g_kv_store;
-
 static inline std::string wrong_type() {
     return "-WRONGTYPE Operation against a key holding the wrong kind of value\r\n";
 }
 
-std::string db_set(const std::vector<std::string>& parts) {
+std::string db_set(DB& db, const std::vector<std::string>& parts) {
     if (parts.size() != 3) {
         return resp_error("wrong number of arguments");
     }
 
-    g_kv_store[parts[1]] = ValueEntry{parts[2]};
+    db.kvstore[parts[1]] = ValueEntry{parts[2]};
     return resp_simple_string("OK");
 }
 
-std::string db_get(const std::vector<std::string>& parts) {
+std::string db_get(DB& db, const std::vector<std::string>& parts) {
     if (parts.size() != 2) {
         return resp_error("wrong number of arguments");
     }
 
-    auto it = g_kv_store.find(parts[1]);
-    if (it == g_kv_store.end()) {
+    auto it = db.kvstore.find(parts[1]);
+    if (it == db.kvstore.end()) {
         return resp_null();
     }
 
@@ -33,14 +31,14 @@ std::string db_get(const std::vector<std::string>& parts) {
     return wrong_type();
 }
 
-std::string db_incr(const std::vector<std::string>& parts) {
+std::string db_incr(DB& db, const std::vector<std::string>& parts) {
     if (parts.size() != 2) {
         return resp_error("wrong number of arguments");
     }
 
-    auto it = g_kv_store.find(parts[1]);
-    if (it == g_kv_store.end()) {
-        g_kv_store[parts[1]] = ValueEntry{std::string("1")};
+    auto it = db.kvstore.find(parts[1]);
+    if (it == db.kvstore.end()) {
+        db.kvstore[parts[1]] = ValueEntry{std::string("1")};
         return resp_integer(1);
     }
 
@@ -58,14 +56,14 @@ std::string db_incr(const std::vector<std::string>& parts) {
     return wrong_type();
 }
 
-std::string db_decr(const std::vector<std::string>& parts) {
+std::string db_decr(DB& db, const std::vector<std::string>& parts) {
     if (parts.size() != 2) {
         return resp_error("wrong number of arguments");
     }
 
-    auto it = g_kv_store.find(parts[1]);
-    if (it == g_kv_store.end()) {
-        g_kv_store[parts[1]] = ValueEntry{std::string("-1")};
+    auto it = db.kvstore.find(parts[1]);
+    if (it == db.kvstore.end()) {
+        db.kvstore[parts[1]] = ValueEntry{std::string("-1")};
         return resp_integer(-1);
     }
 
@@ -83,7 +81,7 @@ std::string db_decr(const std::vector<std::string>& parts) {
     return wrong_type();
 }
 
-std::string db_incrby(const std::vector<std::string>& parts) {
+std::string db_incrby(DB& db, const std::vector<std::string>& parts) {
     if (parts.size() != 3) {
         return resp_error("wrong number of arguments");
     }
@@ -94,9 +92,9 @@ std::string db_incrby(const std::vector<std::string>& parts) {
         return resp_error("value is not an integer or out of range");
     }
 
-    auto it = g_kv_store.find(parts[1]);
-    if (it == g_kv_store.end()) {
-        g_kv_store[parts[1]] = ValueEntry{std::to_string(increment)};
+    auto it = db.kvstore.find(parts[1]);
+    if (it == db.kvstore.end()) {
+        db.kvstore[parts[1]] = ValueEntry{std::to_string(increment)};
         return resp_integer(increment);
     }
 
@@ -114,7 +112,7 @@ std::string db_incrby(const std::vector<std::string>& parts) {
     return wrong_type();
 }
 
-std::string db_decrby(const std::vector<std::string>& parts) {
+std::string db_decrby(DB& db, const std::vector<std::string>& parts) {
     if (parts.size() != 3) {
         return resp_error("wrong number of arguments");
     }
@@ -125,9 +123,9 @@ std::string db_decrby(const std::vector<std::string>& parts) {
         return resp_error("value is not an integer or out of range");
     }
 
-    auto it = g_kv_store.find(parts[1]);
-    if (it == g_kv_store.end()) {
-        g_kv_store[parts[1]] = ValueEntry{std::to_string(-decrement)};
+    auto it = db.kvstore.find(parts[1]);
+    if (it == db.kvstore.end()) {
+        db.kvstore[parts[1]] = ValueEntry{std::to_string(-decrement)};
         return resp_integer(-decrement);
     }
 
@@ -145,39 +143,39 @@ std::string db_decrby(const std::vector<std::string>& parts) {
     return wrong_type();
 }
 
-std::string db_exists(const std::vector<std::string>& parts) {
+std::string db_exists(DB& db, const std::vector<std::string>& parts) {
     if (parts.size() < 2) {
         return resp_error("wrong number of arguments");
     }
 
     long long count = 0;
     for (size_t i = 1; i < parts.size(); ++i) {
-        if (g_kv_store.find(parts[i]) != g_kv_store.end()) {
+        if (db.kvstore.find(parts[i]) != db.kvstore.end()) {
             ++count;
         }
     }
     return resp_integer(count);
 }
 
-std::string db_del(const std::vector<std::string>& parts) {
+std::string db_del(DB& db, const std::vector<std::string>& parts) {
     if (parts.size() < 2) {
         return resp_error("wrong number of arguments");
     }
 
     long long deleted = 0;
     for (size_t i = 1; i < parts.size(); ++i) {
-        deleted += static_cast<long long>(g_kv_store.erase(parts[i]));
+        deleted += static_cast<long long>(db.kvstore.erase(parts[i]));
     }
     return resp_integer(deleted);
 }
 
-std::string db_type(const std::vector<std::string>& parts) {
+std::string db_type(DB& db, const std::vector<std::string>& parts) {
     if (parts.size() != 2) {
         return resp_error("wrong number of arguments");
     }
 
-    auto it = g_kv_store.find(parts[1]);
-    if (it == g_kv_store.end()) {
+    auto it = db.kvstore.find(parts[1]);
+    if (it == db.kvstore.end()) {
         return resp_simple_string("none");
     }
 
@@ -190,14 +188,14 @@ std::string db_type(const std::vector<std::string>& parts) {
     return resp_simple_string("none");
 }
 
-std::string db_rpush(const std::vector<std::string>& parts) {
+std::string db_rpush(DB& db, const std::vector<std::string>& parts) {
     if (parts.size() < 3) {
         return resp_error("wrong number of arguments");
     }
 
-    auto it = g_kv_store.find(parts[1]);
-    if (it == g_kv_store.end()) {
-        auto result = g_kv_store.emplace(parts[1], ValueEntry{ListType{}});
+    auto it = db.kvstore.find(parts[1]);
+    if (it == db.kvstore.end()) {
+        auto result = db.kvstore.emplace(parts[1], ValueEntry{ListType{}});
         it = result.first;
     }
 
@@ -210,14 +208,14 @@ std::string db_rpush(const std::vector<std::string>& parts) {
     return wrong_type();
 }
 
-std::string db_lpush(const std::vector<std::string>& parts) {
+std::string db_lpush(DB& db, const std::vector<std::string>& parts) {
     if (parts.size() < 3) {
         return resp_error("wrong number of arguments");
     }
 
-    auto it = g_kv_store.find(parts[1]);
-    if (it == g_kv_store.end()) {
-        auto result = g_kv_store.emplace(parts[1], ValueEntry{ListType{}});
+    auto it = db.kvstore.find(parts[1]);
+    if (it == db.kvstore.end()) {
+        auto result = db.kvstore.emplace(parts[1], ValueEntry{ListType{}});
         it = result.first;
     }
 
@@ -230,13 +228,13 @@ std::string db_lpush(const std::vector<std::string>& parts) {
     return wrong_type();
 }
 
-std::string db_lpop(const std::vector<std::string>& parts) {
+std::string db_lpop(DB& db, const std::vector<std::string>& parts) {
     if (parts.size() != 2) {
         return resp_error("wrong number of arguments");
     }
 
-    auto it = g_kv_store.find(parts[1]);
-    if (it == g_kv_store.end()) return resp_null();
+    auto it = db.kvstore.find(parts[1]);
+    if (it == db.kvstore.end()) return resp_null();
 
     if (auto* list_val = std::get_if<ListType>(&it->second.data)) {
         if (list_val->empty()) return resp_null();
@@ -248,13 +246,13 @@ std::string db_lpop(const std::vector<std::string>& parts) {
     return wrong_type();
 }
 
-std::string db_rpop(const std::vector<std::string>& parts) {
+std::string db_rpop(DB& db, const std::vector<std::string>& parts) {
     if (parts.size() != 2) {
         return resp_error("wrong number of arguments");
     }
 
-    auto it = g_kv_store.find(parts[1]);
-    if (it == g_kv_store.end()) return resp_null();
+    auto it = db.kvstore.find(parts[1]);
+    if (it == db.kvstore.end()) return resp_null();
 
     if (auto* list_val = std::get_if<ListType>(&it->second.data)) {
         if (list_val->empty()) return resp_null();
@@ -266,13 +264,13 @@ std::string db_rpop(const std::vector<std::string>& parts) {
     return wrong_type();
 }
 
-std::string db_llen(const std::vector<std::string>& parts) {
+std::string db_llen(DB& db, const std::vector<std::string>& parts) {
     if (parts.size() != 2) {
         return resp_error("wrong number of arguments");
     }
 
-    auto it = g_kv_store.find(parts[1]);
-    if (it == g_kv_store.end()) return resp_integer(0);
+    auto it = db.kvstore.find(parts[1]);
+    if (it == db.kvstore.end()) return resp_integer(0);
 
     if (auto* list_val = std::get_if<ListType>(&it->second.data)) {
         return resp_integer(static_cast<long long>(list_val->size()));
@@ -280,13 +278,13 @@ std::string db_llen(const std::vector<std::string>& parts) {
     return wrong_type();
 }
 
-std::string db_lindex(const std::vector<std::string>& parts) {
+std::string db_lindex(DB& db, const std::vector<std::string>& parts) {
     if (parts.size() != 3) {
         return resp_error("wrong number of arguments");
     }
 
-    auto it = g_kv_store.find(parts[1]);
-    if (it == g_kv_store.end()) return resp_null();
+    auto it = db.kvstore.find(parts[1]);
+    if (it == db.kvstore.end()) return resp_null();
 
     if (auto* list_val = std::get_if<ListType>(&it->second.data)) {
         long long index = 0;
@@ -303,13 +301,13 @@ std::string db_lindex(const std::vector<std::string>& parts) {
     return wrong_type();
 }
 
-std::string db_lrange(const std::vector<std::string>& parts) {
+std::string db_lrange(DB& db, const std::vector<std::string>& parts) {
     if (parts.size() != 4) {
         return resp_error("wrong number of arguments");
     }
 
-    auto it = g_kv_store.find(parts[1]);
-    if (it == g_kv_store.end()) return resp_array({});
+    auto it = db.kvstore.find(parts[1]);
+    if (it == db.kvstore.end()) return resp_array({});
 
     if (auto* list_val = std::get_if<ListType>(&it->second.data)) {
         long long start, stop;
@@ -339,14 +337,14 @@ std::string db_lrange(const std::vector<std::string>& parts) {
     return wrong_type();
 }
 
-std::string db_hset(const std::vector<std::string>& parts) {
+std::string db_hset(DB& db, const std::vector<std::string>& parts) {
     if (parts.size() < 4 || parts.size() % 2 != 0) {
         return resp_error("wrong number of arguments");
     }
 
-    auto it = g_kv_store.find(parts[1]);
-    if (it == g_kv_store.end()) {
-        auto result = g_kv_store.emplace(parts[1], ValueEntry{HashType{}});
+    auto it = db.kvstore.find(parts[1]);
+    if (it == db.kvstore.end()) {
+        auto result = db.kvstore.emplace(parts[1], ValueEntry{HashType{}});
         it = result.first;
     }
 
@@ -362,13 +360,13 @@ std::string db_hset(const std::vector<std::string>& parts) {
     return wrong_type();
 }
 
-std::string db_hget(const std::vector<std::string>& parts) {
+std::string db_hget(DB& db, const std::vector<std::string>& parts) {
     if (parts.size() != 3) {
         return resp_error("wrong number of arguments");
     }
 
-    auto it = g_kv_store.find(parts[1]);
-    if (it == g_kv_store.end()) return resp_null();
+    auto it = db.kvstore.find(parts[1]);
+    if (it == db.kvstore.end()) return resp_null();
 
     if (auto* hash_val = std::get_if<HashType>(&it->second.data)) {
         auto field_it = hash_val->find(parts[2]);
@@ -378,13 +376,13 @@ std::string db_hget(const std::vector<std::string>& parts) {
     return wrong_type();
 }
 
-std::string db_hdel(const std::vector<std::string>& parts) {
+std::string db_hdel(DB& db, const std::vector<std::string>& parts) {
     if (parts.size() < 3) {
         return resp_error("wrong number of arguments");
     }
 
-    auto it = g_kv_store.find(parts[1]);
-    if (it == g_kv_store.end()) return resp_integer(0);
+    auto it = db.kvstore.find(parts[1]);
+    if (it == db.kvstore.end()) return resp_integer(0);
 
     if (auto* hash_val = std::get_if<HashType>(&it->second.data)) {
         long long deleted = 0;
@@ -396,13 +394,13 @@ std::string db_hdel(const std::vector<std::string>& parts) {
     return wrong_type();
 }
 
-std::string db_hexists(const std::vector<std::string>& parts) {
+std::string db_hexists(DB& db, const std::vector<std::string>& parts) {
     if (parts.size() != 3) {
         return resp_error("wrong number of arguments");
     }
 
-    auto it = g_kv_store.find(parts[1]);
-    if (it == g_kv_store.end()) return resp_integer(0);
+    auto it = db.kvstore.find(parts[1]);
+    if (it == db.kvstore.end()) return resp_integer(0);
 
     if (auto* hash_val = std::get_if<HashType>(&it->second.data)) {
         return resp_integer(hash_val->count(parts[2]));
@@ -410,13 +408,13 @@ std::string db_hexists(const std::vector<std::string>& parts) {
     return wrong_type();
 }
 
-std::string db_hlen(const std::vector<std::string>& parts) {
+std::string db_hlen(DB& db, const std::vector<std::string>& parts) {
     if (parts.size() != 2) {
         return resp_error("wrong number of arguments");
     }
 
-    auto it = g_kv_store.find(parts[1]);
-    if (it == g_kv_store.end()) return resp_integer(0);
+    auto it = db.kvstore.find(parts[1]);
+    if (it == db.kvstore.end()) return resp_integer(0);
 
     if (auto* hash_val = std::get_if<HashType>(&it->second.data)) {
         return resp_integer(static_cast<long long>(hash_val->size()));
@@ -424,13 +422,13 @@ std::string db_hlen(const std::vector<std::string>& parts) {
     return wrong_type();
 }
 
-std::string db_hkeys(const std::vector<std::string>& parts) {
+std::string db_hkeys(DB& db, const std::vector<std::string>& parts) {
     if (parts.size() != 2) {
         return resp_error("wrong number of arguments");
     }
 
-    auto it = g_kv_store.find(parts[1]);
-    if (it == g_kv_store.end()) return resp_array({});
+    auto it = db.kvstore.find(parts[1]);
+    if (it == db.kvstore.end()) return resp_array({});
 
     if (auto* hash_val = std::get_if<HashType>(&it->second.data)) {
         std::vector<std::string> keys;
@@ -442,13 +440,13 @@ std::string db_hkeys(const std::vector<std::string>& parts) {
     return wrong_type();
 }
 
-std::string db_hvals(const std::vector<std::string>& parts) {
+std::string db_hvals(DB& db, const std::vector<std::string>& parts) {
     if (parts.size() != 2) {
         return resp_error("wrong number of arguments");
     }
 
-    auto it = g_kv_store.find(parts[1]);
-    if (it == g_kv_store.end()) return resp_array({});
+    auto it = db.kvstore.find(parts[1]);
+    if (it == db.kvstore.end()) return resp_array({});
 
     if (auto* hash_val = std::get_if<HashType>(&it->second.data)) {
         std::vector<std::string> vals;
@@ -460,13 +458,13 @@ std::string db_hvals(const std::vector<std::string>& parts) {
     return wrong_type();
 }
 
-std::string db_hgetall(const std::vector<std::string>& parts) {
+std::string db_hgetall(DB& db, const std::vector<std::string>& parts) {
     if (parts.size() != 2) {
         return resp_error("wrong number of arguments");
     }
 
-    auto it = g_kv_store.find(parts[1]);
-    if (it == g_kv_store.end()) return resp_array({});
+    auto it = db.kvstore.find(parts[1]);
+    if (it == db.kvstore.end()) return resp_array({});
 
     if (auto* hash_val = std::get_if<HashType>(&it->second.data)) {
         std::vector<std::string> result;
@@ -479,14 +477,14 @@ std::string db_hgetall(const std::vector<std::string>& parts) {
     return wrong_type();
 }
 
-std::string db_sadd(const std::vector<std::string>& parts) {
+std::string db_sadd(DB& db, const std::vector<std::string>& parts) {
     if (parts.size() < 3) {
         return resp_error("wrong number of arguments");
     }
 
-    auto it = g_kv_store.find(parts[1]);
-    if (it == g_kv_store.end()) {
-        auto result = g_kv_store.emplace(parts[1], ValueEntry{SetType{}});
+    auto it = db.kvstore.find(parts[1]);
+    if (it == db.kvstore.end()) {
+        auto result = db.kvstore.emplace(parts[1], ValueEntry{SetType{}});
         it = result.first;
     }
 
@@ -502,13 +500,13 @@ std::string db_sadd(const std::vector<std::string>& parts) {
     return wrong_type();
 }
 
-std::string db_srem(const std::vector<std::string>& parts) {
+std::string db_srem(DB& db, const std::vector<std::string>& parts) {
     if (parts.size() < 3) {
         return resp_error("wrong number of arguments");
     }
 
-    auto it = g_kv_store.find(parts[1]);
-    if (it == g_kv_store.end()) return resp_integer(0);
+    auto it = db.kvstore.find(parts[1]);
+    if (it == db.kvstore.end()) return resp_integer(0);
 
     if (auto* set_val = std::get_if<SetType>(&it->second.data)) {
         long long removed = 0;
@@ -520,13 +518,13 @@ std::string db_srem(const std::vector<std::string>& parts) {
     return wrong_type();
 }
 
-std::string db_scard(const std::vector<std::string>& parts) {
+std::string db_scard(DB& db, const std::vector<std::string>& parts) {
     if (parts.size() != 2) {
         return resp_error("wrong number of arguments");
     }
 
-    auto it = g_kv_store.find(parts[1]);
-    if (it == g_kv_store.end()) return resp_integer(0);
+    auto it = db.kvstore.find(parts[1]);
+    if (it == db.kvstore.end()) return resp_integer(0);
 
     if (auto* set_val = std::get_if<SetType>(&it->second.data)) {
         return resp_integer(static_cast<long long>(set_val->size()));
@@ -534,13 +532,13 @@ std::string db_scard(const std::vector<std::string>& parts) {
     return wrong_type();
 }
 
-std::string db_smembers(const std::vector<std::string>& parts) {
+std::string db_smembers(DB& db, const std::vector<std::string>& parts) {
     if (parts.size() != 2) {
         return resp_error("wrong number of arguments");
     }
 
-    auto it = g_kv_store.find(parts[1]);
-    if (it == g_kv_store.end()) return resp_array({});
+    auto it = db.kvstore.find(parts[1]);
+    if (it == db.kvstore.end()) return resp_array({});
 
     if (auto* set_val = std::get_if<SetType>(&it->second.data)) {
         std::vector<std::string> members;
@@ -552,13 +550,13 @@ std::string db_smembers(const std::vector<std::string>& parts) {
     return wrong_type();
 }
 
-std::string db_sismember(const std::vector<std::string>& parts) {
+std::string db_sismember(DB& db, const std::vector<std::string>& parts) {
     if (parts.size() != 3) {
         return resp_error("wrong number of arguments");
     }
 
-    auto it = g_kv_store.find(parts[1]);
-    if (it == g_kv_store.end()) return resp_integer(0);
+    auto it = db.kvstore.find(parts[1]);
+    if (it == db.kvstore.end()) return resp_integer(0);
 
     if (auto* set_val = std::get_if<SetType>(&it->second.data)) {
         return resp_integer(set_val->count(parts[2]));

@@ -1,8 +1,8 @@
 #pragma once
 #include <string>
 #include <vector>
-#include <functional>
+#include "db.h"
 
-using CommandHandler = std::function<std::string(const std::vector<std::string>&)>;
+using CommandHandler = std::string (*)(DB&, const std::vector<std::string>&);
 
-std::string dispatch_command(const std::vector<std::string>& parts);
+std::string dispatch_command(DB& db, const std::vector<std::string>& parts);

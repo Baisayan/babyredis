@@ -14,39 +14,43 @@ struct ValueEntry {
     std::variant<std::string, ListType, SetType, HashType> data;
 };
 
+struct DB {
+    std::unordered_map<std::string, ValueEntry> kvstore;
+};
+
 // string operations
-std::string db_set(const std::vector<std::string>& parts);
-std::string db_get(const std::vector<std::string>& parts);
-std::string db_exists(const std::vector<std::string>& parts);
-std::string db_del(const std::vector<std::string>& parts);
-std::string db_incr(const std::vector<std::string>& parts);
-std::string db_decr(const std::vector<std::string>& parts);
-std::string db_incrby(const std::vector<std::string>& parts);
-std::string db_decrby(const std::vector<std::string>& parts);
-std::string db_type(const std::vector<std::string>& parts);
+std::string db_set(DB& db, const std::vector<std::string>& parts);
+std::string db_get(DB& db, const std::vector<std::string>& parts);
+std::string db_exists(DB& db, const std::vector<std::string>& parts);
+std::string db_del(DB& db, const std::vector<std::string>& parts);
+std::string db_incr(DB& db, const std::vector<std::string>& parts);
+std::string db_decr(DB& db, const std::vector<std::string>& parts);
+std::string db_incrby(DB& db, const std::vector<std::string>& parts);
+std::string db_decrby(DB& db, const std::vector<std::string>& parts);
+std::string db_type(DB& db, const std::vector<std::string>& parts);
 
 // list operations
-std::string db_rpush(const std::vector<std::string>& parts);
-std::string db_lpush(const std::vector<std::string>& parts);
-std::string db_lpop(const std::vector<std::string>& parts);
-std::string db_rpop(const std::vector<std::string>& parts);
-std::string db_llen(const std::vector<std::string>& parts);
-std::string db_lrange(const std::vector<std::string>& parts);
-std::string db_lindex(const std::vector<std::string>& parts);
+std::string db_rpush(DB& db, const std::vector<std::string>& parts);
+std::string db_lpush(DB& db, const std::vector<std::string>& parts);
+std::string db_lpop(DB& db, const std::vector<std::string>& parts);
+std::string db_rpop(DB& db, const std::vector<std::string>& parts);
+std::string db_llen(DB& db, const std::vector<std::string>& parts);
+std::string db_lrange(DB& db, const std::vector<std::string>& parts);
+std::string db_lindex(DB& db, const std::vector<std::string>& parts);
 
 // hash operations
-std::string db_hset(const std::vector<std::string>& parts);
-std::string db_hget(const std::vector<std::string>& parts);
-std::string db_hdel(const std::vector<std::string>& parts);
-std::string db_hkeys(const std::vector<std::string>& parts);
-std::string db_hvals(const std::vector<std::string>& parts);
-std::string db_hgetall(const std::vector<std::string>& parts);
-std::string db_hexists(const std::vector<std::string>& parts);
-std::string db_hlen(const std::vector<std::string>& parts);
+std::string db_hset(DB& db, const std::vector<std::string>& parts);
+std::string db_hget(DB& db, const std::vector<std::string>& parts);
+std::string db_hdel(DB& db, const std::vector<std::string>& parts);
+std::string db_hkeys(DB& db, const std::vector<std::string>& parts);
+std::string db_hvals(DB& db, const std::vector<std::string>& parts);
+std::string db_hgetall(DB& db, const std::vector<std::string>& parts);
+std::string db_hexists(DB& db, const std::vector<std::string>& parts);
+std::string db_hlen(DB& db, const std::vector<std::string>& parts);
 
 // set operations
-std::string db_sadd(const std::vector<std::string>& parts);
-std::string db_srem(const std::vector<std::string>& parts);
-std::string db_scard(const std::vector<std::string>& parts);
-std::string db_smembers(const std::vector<std::string>& parts);
-std::string db_sismember(const std::vector<std::string>& parts);
+std::string db_sadd(DB& db, const std::vector<std::string>& parts);
+std::string db_srem(DB& db, const std::vector<std::string>& parts);
+std::string db_scard(DB& db, const std::vector<std::string>& parts);
+std::string db_smembers(DB& db, const std::vector<std::string>& parts);
+std::string db_sismember(DB& db, const std::vector<std::string>& parts);

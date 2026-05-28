@@ -3,11 +3,7 @@
 #include <vector>
 #include <cstddef>
 
-enum class ParseResultType {
-    COMPLETE,
-    INCOMPLETE,
-    ERROR
-};
+enum class ParseResultType {COMPLETE, INCOMPLETE, ERROR};
 
 struct ParseResult {
     ParseResultType type;
@@ -25,6 +21,7 @@ struct Client {
     int fd;
     std::string input_buffer;
     std::string output_buffer;
+    size_t offset = 0;
     bool closed = false;
     RespParser parser;
 };
@@ -36,7 +33,7 @@ std::string resp_null();
 std::string resp_integer(long long value);
 std::string resp_array(const std::vector<std::string>& values);
 
+struct DB;
 ParseResult parse_resp(Client& client);
-
-void handle_read(Client& client);
+void handle_read(DB& db, Client& client);
 void handle_write(Client& client);

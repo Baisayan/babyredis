@@ -1,0 +1,7 @@
+1. Buffer Compaction (The biggest bottleneck)In resp.cpp, both your parsing and writing logic use std::string::erase at the front of the string:C++// In parse_resp:
+buffer.erase(0, pos); 
+
+// In handle_write:
+client.output_buffer.erase(0, bytes_sent);
+Erasing from the front of a standard string forces the CPU to physically copy every single remaining byte in the buffer to the left. If a client pipelines 100 commands, you are executing 100 massive memory shifts.The Fix: Instead of erasing, keep a read_pos integer in your Client struct. Only erase/clear the buffer when all commands are processed, or shift the memory only when the buffer gets too large.2. The $O(N)$ Vector EraseIn main.cpp inside close_client, you have this:C++poll_fds.erase(poll_fds.begin() + index);
+When a client disconnects, erasing them from the middle of the poll_fds vector shifts all subsequent connections down by one.The Fix: Use the "swap and pop" technique. Swap the disconnecting client with the very last client in the vector, then call poll_fds.pop_back(). This turns an $O(N)$ operation into an $O(1)$ operation.3. Global State vs. AOFRight now, g_kv_store is a global variable. AOF requires intercepting write commands and writing them to a file descriptor. If you keep the database global, you will likely make the AOF file descriptor global too, which makes graceful shutdowns, error handling, and file syncing very messy.The Fix: Wrap your state into a struct RedisServer that holds the kv_store, the poll_fds, and eventually the aof_fd.

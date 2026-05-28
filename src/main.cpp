@@ -1,13 +1,11 @@
 #include <iostream>
-#include <vector>
-#include <unordered_map>
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <poll.h>
-#include <cerrno>
 
+#include "db.h"
 #include "config.h"
 #include "resp.h"
 
@@ -15,11 +13,9 @@ RedisConfig g_config;
 
 static void set_nonblocking(int fd) {
     int flags = fcntl(fd, F_GETFL, 0);
-
     if (flags == -1) {
         return;
     }
-
     fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 }
 
@@ -29,15 +25,15 @@ static void close_client(
     size_t index
 ) {
     int fd = poll_fds[index].fd;
-
     close(fd);
-
     clients.erase(fd);
-
-    poll_fds.erase(poll_fds.begin() + index);
+    if (index < poll_fds.size() - 1) {
+        poll_fds[index] = poll_fds.back();
+    }
+    poll_fds.pop_back();
 }
 
-int main(int argc, char** argv) {   
+int main(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (i + 1 < argc && arg == "--port") {
@@ -52,9 +48,7 @@ int main(int argc, char** argv) {
     }
 
     set_nonblocking(server_fd);
-
     int reuse = 1;
-
     setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
 
     sockaddr_in addr{};
@@ -66,7 +60,7 @@ int main(int argc, char** argv) {
         std::cerr << "Failed to bind to port " << g_config.port << std::endl;
         return 1;
     }
-    
+
     if (listen(server_fd, SOMAXCONN) < 0) {
         std::cerr << "Listen failed\n";
         return 1;
@@ -75,7 +69,7 @@ int main(int argc, char** argv) {
     std::unordered_map<int, Client> clients;
     std::vector<pollfd> poll_fds;
     poll_fds.push_back({server_fd, POLLIN, 0});
-
+    DB db;
     std::cout << "BabyRedis server listening on port " << g_config.port << "...\n";
 
     while (true) {
@@ -88,7 +82,6 @@ int main(int argc, char** argv) {
         if (poll_fds[0].revents & POLLIN) {
             while (true) {
                 int client_fd = accept(server_fd, nullptr, nullptr);
-
                 if (client_fd < 0) {
                     if (errno == EWOULDBLOCK || errno == EAGAIN) {
                         break;
@@ -99,9 +92,7 @@ int main(int argc, char** argv) {
 
                 Client client{};
                 client.fd = client_fd;
-
                 clients[client_fd] = std::move(client);
-
                 poll_fds.push_back({client_fd, POLLIN, 0});
             }
         }
@@ -110,28 +101,23 @@ int main(int argc, char** argv) {
         for (size_t i = 1; i < poll_fds.size(); ++i) {
             pollfd& pfd = poll_fds[i];
             auto it = clients.find(pfd.fd);
-
             if (it == clients.end()) continue;
             Client& client = it->second;
 
             if (pfd.revents & POLLIN) {
-                handle_read(client);
+                handle_read(db, client);
             }
-
             if (pfd.revents & POLLOUT) {
                 handle_write(client);
             }
-
             if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
                 client.closed = true;
             }
-
             if (client.closed) {
                 close_client(clients, poll_fds, i);
                 --i;
                 continue;
             }
-
             if (client.output_buffer.empty()) {
                 pfd.events = POLLIN;
             }
