@@ -25,7 +25,7 @@ bool aof_replay(DB& db, const RedisConfig& config, std::string& error) {
         return false;
     }
 
-    Client dummy_client{};
+    Client client{};
     char buffer[4096];
 
     while (true) {
@@ -35,12 +35,11 @@ bool aof_replay(DB& db, const RedisConfig& config, std::string& error) {
             close(fd);
             return false;
         }
-        if (bytes_read == 0) break; // EOF
-
-        dummy_client.input_buffer.append(buffer, bytes_read);
+        if (bytes_read == 0) break;
+        client.input_buffer.append(buffer, bytes_read);
 
         while (true) {
-            ParseResult result = parse_resp(dummy_client);
+            ParseResult result = parse_resp(client);
             if (result.type == ParseResultType::INCOMPLETE) break;
             
             if (result.type == ParseResultType::ERROR) {
@@ -55,7 +54,7 @@ bool aof_replay(DB& db, const RedisConfig& config, std::string& error) {
                 return false;
             }
 
-            std::string response = dispatch_command(db, result.command);
+            std::string response = dispatch(db, result.command);
             if (!response.empty() && response[0] == '-') {
                 error = "AOF command replayed with error: " + response;
                 close(fd);
@@ -84,12 +83,9 @@ bool aof_open(Aof& aof, const RedisConfig& config, std::string& error) {
 
 bool aof_append(Aof& aof, std::vector<std::string> command, std::string& error) {
     if (aof.fd < 0 || command.empty()) return true;
-
-    // Canonicalize only the command name
     for (char& c : command[0]) c = toupper(c);
-
     std::string raw_resp = reconstruct_resp_array(command);
-    
+
     ssize_t written = write(aof.fd, raw_resp.data(), raw_resp.size());
     if (written < 0 || static_cast<size_t>(written) != raw_resp.size()) {
         error = "Fatal write error to AOF: " + std::string(strerror(errno));

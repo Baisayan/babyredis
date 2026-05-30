@@ -7,6 +7,7 @@
 #include "db.h"
 #include "config.h"
 #include "resp.h"
+#include "pubsub.h"
 
 RedisConfig config;
 
@@ -18,9 +19,11 @@ static void set_nonblocking(int fd) {
 static void close_client(
     std::unordered_map<int, Client>& clients,
     std::vector<pollfd>& poll_fds,
-    size_t index
+    size_t index,
+    PubSub& pubsub
 ) {
     int fd = poll_fds[index].fd;
+    remove_client(pubsub, fd);
     close(fd);
     clients.erase(fd);
     if (index < poll_fds.size() - 1) {
@@ -51,6 +54,7 @@ int main(int argc, char** argv) {
 
     DB db;
     Aof aof;
+    PubSub pubsub;
     std::string err;
     
     std::cout << "Loading AOF file...\n";
@@ -115,7 +119,7 @@ int main(int argc, char** argv) {
                 poll_fds.push_back({client_fd, POLLIN, 0});
             }
         }
-
+        
         // handle existing clients
         for (size_t i = 1; i < poll_fds.size(); ++i) {
             pollfd& pfd = poll_fds[i];
@@ -123,11 +127,11 @@ int main(int argc, char** argv) {
             if (it == clients.end()) continue;
             Client& client = it->second;
 
-            if (pfd.revents & POLLIN) handle_read(db, aof, client);
+            if (pfd.revents & POLLIN) handle_read(db, aof, client, pubsub, clients);
             if (pfd.revents & POLLOUT) handle_write(client);
             if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) client.closed = true;
             if (client.closed) {
-                close_client(clients, poll_fds, i);
+                close_client(clients, poll_fds, i, pubsub);
                 --i;
                 continue;
             }

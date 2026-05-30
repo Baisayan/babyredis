@@ -60,7 +60,7 @@ bool is_write_command(const std::string& command) {
     return write_commands.find(command) != write_commands.end();
 }
 
-std::string dispatch_command(DB& db, const std::vector<std::string>& parts) {
+std::string dispatch(DB& db, const std::vector<std::string>& parts) {
     if (parts.empty()) return resp_error("empty command");
     std::string command = parts[0];
     for (char& c : command) c = toupper(c);

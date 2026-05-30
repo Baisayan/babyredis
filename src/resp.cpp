@@ -4,6 +4,7 @@
 
 #include "resp.h"
 #include "commands.h"
+#include "pubsub.h"
 
 std::string resp_simple_string(const std::string& value) {
     return "+" + value + "\r\n";
@@ -107,7 +108,7 @@ ParseResult parse_resp(Client& client) {
     return result;
 }
 
-void handle_read(DB& db, Aof& aof, Client& client) {
+void handle_read(DB& db, Aof& aof, Client& client, PubSub& pubsub, std::unordered_map<int, Client>& clients) {
     char buffer[4096];
     while (true) {
         ssize_t bytes_read = recv(client.fd, buffer, sizeof(buffer), 0);
@@ -133,15 +134,41 @@ void handle_read(DB& db, Aof& aof, Client& client) {
             client.closed = true;
             return;
         }
-        std::string response = dispatch_command(db, result.command);
-        if (!response.empty()) {
-            client.output_buffer += response;
+        if (result.command.empty()) continue;
+        
+        std::string cmd = result.command[0];
+        for (char& c : cmd) c = toupper(c);
+        
+        if (cmd == "QUIT") {
+            client.output_buffer += resp_simple_string("OK");
+            client.closed = true;
+            return;
+        }
+        
+        bool is_pubsub_cmd = (cmd == "SUBSCRIBE" || cmd == "UNSUBSCRIBE" || cmd == "PUBLISH");
+        bool is_allowed_in_sub = is_pubsub_cmd || cmd == "PING" || cmd == "QUIT";
 
-            if (response[0] != '-' && !result.command.empty() && is_write_command(result.command[0])) {
-                std::string aof_error;
-                if (!aof_append(aof, result.command, aof_error)) {
-                    std::cerr << "[FATAL] " << aof_error << "\n";
-                    exit(1);
+        if (client.is_subscribed && !is_allowed_in_sub) {
+            client.output_buffer += resp_error("only (P)SUBSCRIBE / (P)UNSUBSCRIBE / PING / QUIT allowed in this context");
+            continue;
+        }
+
+        if (is_pubsub_cmd) {
+            handle_pubsub(client, result.command, pubsub, clients);
+        } else if (client.is_subscribed && cmd == "PING") {
+            std::vector<std::string> ping_resp = {"pong"};
+            ping_resp.push_back(result.command.size() > 1 ? result.command[1] : "");
+            client.output_buffer += resp_array(ping_resp);
+        } else {
+            std::string response = dispatch(db, result.command);
+            if (!response.empty()) {
+                client.output_buffer += response;
+                if (response[0] != '-' && !result.command.empty() && is_write_command(cmd)) {
+                    std::string aof_error;
+                    if (!aof_append(aof, result.command, aof_error)) {
+                        std::cerr << "[FATAL] " << aof_error << "\n";
+                        exit(1);
+                    }
                 }
             }
         }
