@@ -1,4 +1,5 @@
 #pragma once
+#include "aof.h"
 #include <string>
 #include <vector>
 #include <cstddef>
@@ -34,6 +35,7 @@ std::string resp_integer(long long value);
 std::string resp_array(const std::vector<std::string>& values);
 
 struct DB;
+struct Aof;
 ParseResult parse_resp(Client& client);
-void handle_read(DB& db, Client& client);
+void handle_read(DB& db, Aof& aof, Client& client);
 void handle_write(Client& client);

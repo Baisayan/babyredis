@@ -50,6 +50,16 @@ static const std::unordered_map<std::string, CommandHandler> command_registry = 
     {"SISMEMBER", db_sismember},
 };
 
+bool is_write_command(const std::string& command) {
+    static const std::unordered_set<std::string> write_commands = {
+        "SET", "DEL", "INCR", "DECR", "INCRBY", "DECRBY",
+        "RPUSH", "LPUSH", "RPOP", "LPOP",
+        "HSET", "HDEL", "SADD", "SREM"
+    };
+
+    return write_commands.find(command) != write_commands.end();
+}
+
 std::string dispatch_command(DB& db, const std::vector<std::string>& parts) {
     if (parts.empty()) return resp_error("empty command");
     std::string command = parts[0];

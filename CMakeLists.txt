@@ -12,7 +12,6 @@ set(SOURCES
     src/commands.cpp
     src/resp.cpp
     src/aof.cpp
-    src/pubsub.cpp
 )
 
 add_executable(babyredis ${SOURCES})

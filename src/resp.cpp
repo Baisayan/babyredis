@@ -1,5 +1,6 @@
 #include <sys/socket.h>
 #include <cerrno>
+#include <iostream>
 
 #include "resp.h"
 #include "commands.h"
@@ -106,7 +107,7 @@ ParseResult parse_resp(Client& client) {
     return result;
 }
 
-void handle_read(DB& db, Client& client) {
+void handle_read(DB& db, Aof& aof, Client& client) {
     char buffer[4096];
     while (true) {
         ssize_t bytes_read = recv(client.fd, buffer, sizeof(buffer), 0);
@@ -135,6 +136,14 @@ void handle_read(DB& db, Client& client) {
         std::string response = dispatch_command(db, result.command);
         if (!response.empty()) {
             client.output_buffer += response;
+
+            if (response[0] != '-' && !result.command.empty() && is_write_command(result.command[0])) {
+                std::string aof_error;
+                if (!aof_append(aof, result.command, aof_error)) {
+                    std::cerr << "[FATAL] " << aof_error << "\n";
+                    exit(1);
+                }
+            }
         }
     }
 }
