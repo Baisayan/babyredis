@@ -1,13 +1,18 @@
-cmake_minimum_required(VERSION 3.13)
-project(babyredis)
+cmake_minimum_required(VERSION 3.15)
+project(babyredis LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-set(SOURCE_FILES 
-    src/main.cpp 
-    src/commands.cpp 
-    src/resp_parser.cpp
+set(SOURCES
+    src/main.cpp
+    src/db.cpp
+    src/commands.cpp
+    src/resp.cpp
+    src/aof.cpp
 )
-add_executable(babyredis ${SOURCE_FILES})
-target_include_directories(babyredis PRIVATE src)
+
+add_executable(babyredis ${SOURCES})
+target_include_directories(babyredis PRIVATE include)
